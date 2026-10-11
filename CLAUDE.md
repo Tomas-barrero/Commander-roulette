@@ -224,7 +224,7 @@ Verified against the live API on 2026-10-11 (counts are for `game:arena f:brawl 
 ## Challenge engine notes
 
 - Deck challenges live in `src/challenges/definitions.ts` (46 now). Chaos mode is `src/challenges/chaos.ts`. Rules with several "at least N" checks return multiple `quotas`; land quotas set `lands: true` so the nonland restrictions don't apply to them.
-- Deck challenges live in `src/challenges/definitions.ts`. Commander modifiers (1–9) stay in `src/generator/modifiers.ts`, because they run *before* a commander exists and random tribe/set and the reroll budget need special handling.
+- Commander modifiers (1–9) stay in `src/generator/modifiers.ts`, because they run *before* a commander exists and random tribe/set and the reroll budget need special handling.
 - `pool: 'nonland'` challenges ("every nonland card must…") combine into `ctx.restrictions`, which every generated must-include card also has to match. `pool: 'quota'` challenges ("at least N…") are checked against the deck base + restrictions.
 - Feasibility: a pool smaller than the nonland cards a deck needs (60 for Brawl, 35 for Standard Brawl, or N for a quota) is "too small"; under twice that is "tight".
 
