@@ -1,10 +1,14 @@
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
 import { CardDisplay } from './components/CardDisplay'
 import { ColourPicker } from './components/ColourPicker'
 import { RulesText } from './components/RulesText'
-import { DEFAULT_COLOUR_SETTINGS, manualSelectionProblem, type ColourSettings } from './generator/colours'
+import { SettingsDrawer } from './components/SettingsDrawer'
+import { manualSelectionProblem } from './generator/colours'
 import { generateCommander, NoCommanderError, type GeneratedCommander } from './generator/commander'
+import { describeModifiers } from './generator/modifiers'
 import { ScryfallError } from './scryfall/client'
+import { useSessionState } from './state/session'
+import { useSettings } from './state/settings'
 
 type Status = { kind: 'idle' } | { kind: 'loading' } | { kind: 'error'; title: string; message: string }
 
@@ -18,17 +22,27 @@ function describeError(e: unknown): { title: string; message: string } {
 }
 
 export default function App() {
-  const [colours, setColours] = useState<ColourSettings>(DEFAULT_COLOUR_SETTINGS)
-  const [result, setResult] = useState<GeneratedCommander>()
+  const [settings, setSettings] = useSettings()
+  const [result, setResult] = useSessionState<GeneratedCommander | undefined>('result', undefined)
+  const [generations, setGenerations] = useSessionState('generations', 0)
   const [status, setStatus] = useState<Status>({ kind: 'idle' })
+  const [drawerOpen, setDrawerOpen] = useState(false)
+  const closeDrawer = useCallback(() => setDrawerOpen(false), [])
 
-  const problem = manualSelectionProblem(colours)
+  const problem = manualSelectionProblem(settings.colours)
   const loading = status.kind === 'loading'
+  const activeModifiers = describeModifiers(settings.modifiers).length + (settings.modifiers.rerollBudget.enabled ? 1 : 0)
+
+  // Reroll budget: the first commander of the session is free.
+  const budget = settings.modifiers.rerollBudget
+  const rerollsLeft = Math.max(0, budget.rerolls - Math.max(0, generations - 1))
+  const outOfRerolls = budget.enabled && generations > 0 && rerollsLeft === 0
 
   async function generate() {
     setStatus({ kind: 'loading' })
     try {
-      setResult(await generateCommander('brawl', colours))
+      setResult(await generateCommander(settings))
+      setGenerations((n) => n + 1)
       setStatus({ kind: 'idle' })
     } catch (e) {
       setStatus({ kind: 'error', ...describeError(e) })
@@ -38,25 +52,47 @@ export default function App() {
   return (
     <div className="flex min-h-screen flex-col">
       <header className="border-b border-stone-800 bg-black/30 px-4 py-4">
-        <div className="mx-auto max-w-6xl">
-          <h1 className="font-serif text-2xl font-bold text-amber-100">Commander Roulette</h1>
-          <p className="text-sm text-stone-400">A random MTG Arena Brawl commander to build around.</p>
+        <div className="mx-auto flex max-w-6xl items-center justify-between gap-4">
+          <div>
+            <h1 className="font-serif text-2xl font-bold text-amber-100">Commander Roulette</h1>
+            <p className="text-sm text-stone-400">A random MTG Arena Brawl commander to build around.</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setDrawerOpen(true)}
+            className="relative rounded-lg border border-stone-600 px-4 py-2 text-sm text-stone-200 transition hover:border-amber-300"
+          >
+            ⚙ Settings
+            {activeModifiers > 0 && (
+              <span className="absolute -top-2 -right-2 rounded-full bg-amber-400 px-1.5 text-xs font-bold text-stone-900">
+                {activeModifiers}
+              </span>
+            )}
+          </button>
         </div>
       </header>
 
       <main className="mx-auto w-full max-w-6xl flex-1 space-y-8 px-4 py-6">
         <section className="flex flex-col gap-4 rounded-xl border border-stone-800 bg-stone-900/60 p-4 md:flex-row md:items-end md:justify-between">
-          <ColourPicker value={colours} onChange={setColours} />
+          <ColourPicker value={settings.colours} onChange={(colours) => setSettings({ ...settings, colours })} />
           <div className="flex flex-col items-stretch gap-1 md:items-end">
             <button
               type="button"
               onClick={generate}
-              disabled={loading || !!problem}
+              disabled={loading || !!problem || outOfRerolls}
               className="rounded-lg bg-amber-400 px-6 py-3 text-lg font-bold text-stone-900 shadow-lg transition hover:bg-amber-300 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {loading ? 'Shuffling…' : result ? '🎲 Reroll' : '🎲 Generate commander'}
             </button>
             {problem && <p className="text-sm text-amber-200/80">{problem}</p>}
+            {budget.enabled && result && (
+              <p className="text-sm text-stone-400">
+                {outOfRerolls ? 'Out of rerolls. You’re building this one! ' : `${rerollsLeft} reroll${rerollsLeft === 1 ? '' : 's'} left. `}
+                <button type="button" onClick={() => setGenerations(0)} className="underline hover:text-white">
+                  New session
+                </button>
+              </p>
+            )}
           </div>
         </section>
 
@@ -73,9 +109,20 @@ export default function App() {
           </div>
         ) : (
           result && (
-            <section className="flex flex-col items-center gap-8 md:flex-row md:items-start md:justify-center">
-              <CardDisplay key={result.card.id} card={result.card} />
-              <RulesText card={result.card} />
+            <section className="space-y-6">
+              {result.restrictions.length > 0 && (
+                <ul className="flex flex-wrap justify-center gap-2" aria-label="Commander restrictions">
+                  {result.restrictions.map((r) => (
+                    <li key={r} className="rounded-full border border-amber-400/40 bg-amber-400/10 px-3 py-1 text-sm text-amber-100">
+                      {r}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <div className="flex flex-col items-center gap-8 md:flex-row md:items-start md:justify-center">
+                <CardDisplay key={result.card.id} card={result.card} />
+                <RulesText card={result.card} />
+              </div>
             </section>
           )
         )}
@@ -94,6 +141,8 @@ export default function App() {
         </a>
         .
       </footer>
+
+      <SettingsDrawer open={drawerOpen} onClose={closeDrawer} settings={settings} onChange={setSettings} />
     </div>
   )
 }

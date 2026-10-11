@@ -209,3 +209,6 @@ Verified against the live API on 2026-10-11 (counts are for `game:arena f:brawl 
 - `/cards/random?q=…` honours `game:arena`, so the printing it returns is an Arena printing. A 404 there means nothing matches.
 - Search results include a `warnings` array when part of a query is ignored. Check it when testing new syntax, because the count looks normal otherwise.
 - **User-Agent:** Scryfall rejects Node's default `fetch` User-Agent (HTTP 400). Browsers are fine (they send their own and pages can't override it), but scripts or tests that call the live API from Node must set a custom `User-Agent`.
+- **Random tribe / random set use a "seed" draw.** The generator first fetches a random commander matching everything else, then uses one of its creature types (avoiding Human when there's another option, since Humans are ~41% of creature commanders) or its set. The final draw is then guaranteed at least one match. Multi-word creature types are matched against `/catalog/creature-types` (e.g. `t:"Time Lord"`, which has no Arena commanders at the moment).
+- `e:<set>` and `year>=` match *printings*: a commander reprinted on Arena in 2024 counts as 2024.
+- `pow<=2` excludes non-creature commanders automatically (they have no power), so Tiny commander conflicts with Planeswalkers-only.
