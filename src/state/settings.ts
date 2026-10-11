@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { DEFAULT_CHAOS, type ChaosSettings } from '../challenges/chaos'
 import { defaultChallengeSettings, type ChallengeSettings } from '../challenges/conflicts'
 import { DEFAULT_COLOUR_SETTINGS, type ColourSettings } from '../generator/colours'
 import { DEFAULT_MODIFIERS, type CommanderModifiers } from '../generator/modifiers'
@@ -9,6 +10,7 @@ export interface Settings {
   colours: ColourSettings
   modifiers: CommanderModifiers
   challenges: ChallengeSettings
+  chaos: ChaosSettings
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -16,6 +18,7 @@ export const DEFAULT_SETTINGS: Settings = {
   colours: DEFAULT_COLOUR_SETTINGS,
   modifiers: DEFAULT_MODIFIERS,
   challenges: defaultChallengeSettings(),
+  chaos: DEFAULT_CHAOS,
 }
 
 const STORAGE_KEY = 'commander-roulette:settings'

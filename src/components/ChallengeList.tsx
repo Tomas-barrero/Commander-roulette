@@ -11,7 +11,7 @@ const frontImage = (card: ScryfallCard, size: 'normal' | 'png') =>
 
 const scryfallSearch = (query: string) => `https://scryfall.com/search?q=${encodeURIComponent(query)}`
 
-function PoolBadge({ pool, label = 'Pool' }: { pool: PoolCheck; label?: string }) {
+function PoolBadge({ pool, label }: { pool: PoolCheck; label: string }) {
   const styles = {
     ok: 'border-emerald-700 bg-emerald-950/60 text-emerald-200',
     tight: 'border-amber-600 bg-amber-950/60 text-amber-200',
@@ -59,11 +59,17 @@ function CardLightbox({ card, onClose }: { card: ScryfallCard; onClose: () => vo
 interface Props {
   run: ChallengeRun
   busy: boolean
+  /** Challenges that chaos mode picked: they get a 🎲 marker and a Swap button. */
+  chaosIds?: string[]
   onReroll: (id: string) => void
   onDisable: (id: string) => void
+  onSwap: (id: string) => void
 }
 
-export function ChallengeList({ run, busy, onReroll, onDisable }: Props) {
+const smallButton =
+  'rounded border border-stone-600 px-2 py-0.5 text-xs text-stone-300 hover:border-amber-300 hover:text-amber-100 disabled:opacity-40'
+
+export function ChallengeList({ run, busy, chaosIds = [], onReroll, onDisable, onSwap }: Props) {
   const [enlarged, setEnlarged] = useState<ScryfallCard>()
 
   return (
@@ -75,7 +81,8 @@ export function ChallengeList({ run, busy, onReroll, onDisable }: Props) {
           if (!def) return null
           const icon = CATEGORIES.find((c) => c.id === def.category)?.icon
           const problem = o.skipped ?? o.error
-          const tooSmall = o.pool?.level === 'too-small'
+          const tooSmall = o.pools?.some((p) => p.level === 'too-small')
+          const chaos = chaosIds.includes(o.id)
           return (
             <li key={o.id} className={`space-y-2 ${problem ? 'opacity-60' : ''}`}>
               <div className="flex flex-wrap items-center gap-2">
@@ -83,25 +90,43 @@ export function ChallengeList({ run, busy, onReroll, onDisable }: Props) {
                 <span className="font-medium text-stone-100">{def.name}</span>
                 <Skulls difficulty={def.difficulty} />
                 <TypeBadge type={def.type} />
-                {o.pool && <PoolBadge pool={o.pool} />}
-                {def.generate && !o.skipped && (
-                  <button
-                    type="button"
-                    disabled={busy}
-                    onClick={() => onReroll(o.id)}
-                    className="ml-auto rounded border border-stone-600 px-2 py-0.5 text-xs text-stone-300 hover:border-amber-300 hover:text-amber-100 disabled:opacity-40"
-                  >
-                    🎲 Reroll this
-                  </button>
+                {chaos && (
+                  <span title="Picked by chaos mode" className="rounded bg-fuchsia-900/60 px-1.5 text-[10px] tracking-wide text-fuchsia-200 uppercase">
+                    🎲 chaos
+                  </span>
                 )}
+                <span className="ml-auto flex gap-2">
+                  {def.generate && !o.skipped && (
+                    <button type="button" disabled={busy} onClick={() => onReroll(o.id)} className={smallButton}>
+                      🎲 Reroll this
+                    </button>
+                  )}
+                  {chaos && (
+                    <button type="button" disabled={busy} onClick={() => onSwap(o.id)} className={smallButton}>
+                      🔀 Swap
+                    </button>
+                  )}
+                </span>
               </div>
+              {o.pools && o.pools.length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  {o.pools.map((p) => (
+                    <PoolBadge key={p.query} pool={p} label={p.label ?? 'Pool'} />
+                  ))}
+                </div>
+              )}
               <p className="text-stone-300">{problem ? `Skipped: ${problem}` : o.summary}</p>
               {tooSmall && (
                 <p className="text-sm text-red-300">
                   Not enough Arena cards in your colours to build this.{' '}
                   {def.generate ? 'Reroll it, or ' : ''}
-                  <button type="button" disabled={busy} onClick={() => onDisable(o.id)} className="underline hover:text-white">
-                    turn it off
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => (chaos ? onSwap(o.id) : onDisable(o.id))}
+                    className="underline hover:text-white"
+                  >
+                    {chaos ? 'swap it' : 'turn it off'}
                   </button>
                   .
                 </p>

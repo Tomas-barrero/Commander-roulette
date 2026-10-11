@@ -12,9 +12,11 @@ import {
   quotaPoolQuery,
   type FeasibilityLevel,
 } from './feasibility'
-import type { ChallengeContext, ChallengeDefinition, Generated, ParamValues } from './types'
+import { poolMode, type ChallengeContext, type ChallengeDefinition, type Generated, type ParamValues } from './types'
 
 export interface PoolCheck {
+  /** What's being counted, for rules with several checks (e.g. "Elf creatures"). */
+  label?: string
   query: string
   count: number
   needed: number
@@ -30,7 +32,7 @@ export interface ChallengeOutcome {
   skipped?: string
   /** Generation failed, e.g. no cards matched. */
   error?: string
-  pool?: PoolCheck
+  pools?: PoolCheck[]
 }
 
 export interface ChallengeRun {
@@ -39,11 +41,15 @@ export interface ChallengeRun {
   combined?: PoolCheck
 }
 
+/** Is this outcome unusable: skipped, failed, or with a pool too small to build? */
+export const isBroken = (o: ChallengeOutcome) =>
+  !!o.skipped || !!o.error || !!o.pools?.some((p) => p.level === 'too-small')
+
 const sameParams = (a: ParamValues, b: ParamValues) => JSON.stringify(a) === JSON.stringify(b)
 
-async function checkPool(query: string, needed: number): Promise<PoolCheck> {
+async function checkPool(query: string, needed: number, label?: string): Promise<PoolCheck> {
   const count = await countCards(query)
-  return { query, count, needed, level: feasibility(count, needed) }
+  return { label, query, count, needed, level: feasibility(count, needed) }
 }
 
 /**
@@ -60,8 +66,10 @@ export async function runChallenges(
 ): Promise<ChallengeRun> {
   const active = activeChallenges(settings.challenges)
   const deckBase = deckBaseQuery(settings.format, commander.color_identity)
+  const target = NONLAND_TARGET[settings.format]
   const ctx: ChallengeContext = {
     format: settings.format,
+    nonlandTarget: target,
     commander,
     deckBase,
     restrictions: '',
@@ -96,34 +104,43 @@ export async function runChallenges(
     }
   }
 
+  const isNonland = (a: (typeof active)[number]) => poolMode(a.def, a.params) === 'nonland'
+  const usable = (o?: ChallengeOutcome): o is ChallengeOutcome => !!o && !o.skipped && !o.error
+
   // 1. "Every nonland card must…" rules first: together they form the restrictions
   //    that every generated card has to obey.
-  for (const { def, params } of active.filter((a) => a.def.pool === 'nonland')) await run(def, params)
-  const fragmentOf = (def: ChallengeDefinition) => {
+  for (const { def, params } of active.filter(isNonland)) await run(def, params)
+  const nonlandFragments = active.filter(isNonland).map(({ def }) => {
     const o = outcomes.get(def.id)
-    return o && !o.skipped && !o.error ? def.buildQueryFragment?.(o.params, o.generated) : undefined
-  }
-  const nonlandFragments = active.filter((a) => a.def.pool === 'nonland').map((a) => fragmentOf(a.def))
+    return usable(o) ? def.buildQueryFragment?.(o.params, o.generated) : undefined
+  })
   ctx.restrictions = joinClauses(...nonlandFragments)
 
-  // 2. Everything else (must-includes, quotas, honour rules).
-  for (const { def, params } of active.filter((a) => a.def.pool !== 'nonland')) await run(def, params)
+  // 2. Everything else (must-includes, quotas, other rules).
+  for (const { def, params } of active.filter((a) => !isNonland(a))) await run(def, params)
 
-  // 3. Pool sizes.
-  const target = NONLAND_TARGET[settings.format]
-  for (const { def, params } of active) {
-    const fragment = fragmentOf(def)
-    const outcome = outcomes.get(def.id)!
-    if (!fragment) continue
-    if (def.pool === 'nonland') outcome.pool = await checkPool(nonlandPoolQuery(deckBase, fragment), target)
-    if (def.pool === 'quota') {
-      outcome.pool = await checkPool(quotaPoolQuery(deckBase, ctx.restrictions, fragment), def.quota?.(params) ?? 1)
+  // 3. Pool sizes (all counted in parallel; the client still spaces the requests).
+  const checks: Promise<unknown>[] = []
+  for (const a of active) {
+    const o = outcomes.get(a.def.id)
+    if (!usable(o)) continue
+    if (isNonland(a)) {
+      const fragment = a.def.buildQueryFragment?.(o.params, o.generated)
+      if (fragment) checks.push(checkPool(nonlandPoolQuery(deckBase, fragment), target).then((p) => (o.pools = [p])))
+    } else if (a.def.quotas) {
+      const quotas = a.def.quotas(o.params, o.generated, settings.format)
+      const restrictions = (q: (typeof quotas)[number]) => (q.lands ? '' : ctx.restrictions)
+      checks.push(
+        Promise.all(quotas.map((q) => checkPool(quotaPoolQuery(deckBase, restrictions(q), q.fragment), q.needed, q.label))).then(
+          (pools) => (o.pools = pools),
+        ),
+      )
     }
   }
-  const combined =
-    nonlandFragments.filter(Boolean).length >= 2
-      ? await checkPool(nonlandPoolQuery(deckBase, ctx.restrictions), target)
-      : undefined
+  const combinedCheck =
+    nonlandFragments.filter(Boolean).length >= 2 ? checkPool(nonlandPoolQuery(deckBase, ctx.restrictions), target) : undefined
+  await Promise.all(checks)
+  const combined = await combinedCheck
 
   return { outcomes: active.map((a) => outcomes.get(a.def.id)!), combined }
 }

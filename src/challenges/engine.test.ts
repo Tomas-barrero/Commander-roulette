@@ -39,7 +39,7 @@ describe('runChallenges', () => {
 
   it('checks each pool and the combined pool', async () => {
     const run = await runChallenges(settingsWith({ creatureless: {}, 'no-ramp': {} }), commander)
-    expect(run.outcomes.map((o) => o.pool?.query)).toEqual([
+    expect(run.outcomes.map((o) => o.pools?.[0].query)).toEqual([
       'game:arena f:brawl id<=g -t:land -t:creature',
       'game:arena f:brawl id<=g -t:land -otag:ramp',
     ])
@@ -50,7 +50,7 @@ describe('runChallenges', () => {
   it('skips challenges that do not fit the commander', async () => {
     const run = await runChallenges(settingsWith({ 'low-curve': { max: 2 } }), commander)
     expect(run.outcomes[0].skipped).toMatch(/costs 3/)
-    expect(run.outcomes[0].pool).toBeUndefined()
+    expect(run.outcomes[0].pools).toBeUndefined()
   })
 
   it('rerolls only the requested challenge', async () => {

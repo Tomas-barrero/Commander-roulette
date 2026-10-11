@@ -12,6 +12,9 @@ export type FeasibilityLevel = 'ok' | 'tight' | 'too-small'
  */
 export const NONLAND_TARGET: Record<Format, number> = { brawl: 60, standardbrawl: 35 }
 
+/** Roughly how many lands a deck runs. */
+export const LAND_TARGET: Record<Format, number> = { brawl: 38, standardbrawl: 24 }
+
 /** Under `needed` is too small to build; under twice that leaves very few choices. */
 export function feasibility(count: number, needed: number): FeasibilityLevel {
   if (count < needed) return 'too-small'

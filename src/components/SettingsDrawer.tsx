@@ -13,7 +13,7 @@ import { loadCreatureTypes } from '../scryfall/catalog'
 import type { Format } from '../scryfall/types'
 import type { Settings } from '../state/settings'
 import { ChallengeSettingsSection } from './ChallengeSettings'
-import { inputClass, OptionCard, Range, Segmented } from './controls'
+import { inputClass, OptionCard, Range, Segmented, Toggle } from './controls'
 
 const THIS_YEAR = new Date().getFullYear()
 
@@ -192,6 +192,54 @@ export function SettingsDrawer({ open, onClose, settings, onChange }: Props) {
                 <option value="standardbrawl">Standard Brawl (60 cards)</option>
               </select>
             </label>
+          </section>
+
+          <section className="space-y-3">
+            <h3 className="text-sm font-semibold tracking-wide text-amber-200/80 uppercase">🎲 Chaos mode</h3>
+            <div
+              className={`space-y-3 rounded-lg border p-3 transition ${
+                settings.chaos.enabled ? 'border-fuchsia-400/60 bg-fuchsia-400/5' : 'border-stone-700'
+              }`}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <span className="font-medium">Random challenges</span>
+                  <p className="text-xs text-stone-400">
+                    Every roll adds {settings.chaos.count} random challenge{settings.chaos.count === 1 ? '' : 's'} from every
+                    category (commander modifiers included), on top of any you switch on below. Random picks whose pool is too
+                    small get swapped automatically.
+                  </p>
+                </div>
+                <Toggle
+                  label="Chaos mode"
+                  checked={settings.chaos.enabled}
+                  onChange={(enabled) => onChange({ ...settings, chaos: { ...settings.chaos, enabled } })}
+                />
+              </div>
+              {settings.chaos.enabled && (
+                <>
+                  <Range
+                    label="How many"
+                    value={settings.chaos.count}
+                    min={1}
+                    max={10}
+                    onChange={(count) => onChange({ ...settings, chaos: { ...settings.chaos, count } })}
+                  />
+                  <div className="flex items-center gap-3 text-sm">
+                    <span className="w-20 text-stone-400">Difficulty</span>
+                    <Segmented
+                      value={settings.chaos.difficulty}
+                      onChange={(difficulty) => onChange({ ...settings, chaos: { ...settings.chaos, difficulty } })}
+                      options={[
+                        { value: 'easy', label: '💀 Easy' },
+                        { value: 'mixed', label: 'Mixed' },
+                        { value: 'hard', label: '💀💀💀 Hard' },
+                      ]}
+                    />
+                  </div>
+                </>
+              )}
+            </div>
           </section>
 
           <section className="space-y-3">

@@ -4,7 +4,6 @@ const API = 'https://api.scryfall.com'
 const MIN_GAP_MS = 100 // Scryfall asks for 50–100 ms between requests
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000
 const CACHE_PREFIX = 'scryfall-cache:'
-const MAX_RETRIES = 3
 
 export class ScryfallError extends Error {
   status: number
@@ -22,21 +21,27 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
 // --- Throttled queue -------------------------------------------------------
 // Every call to api.scryfall.com goes through `enqueue`, which runs requests
-// one at a time with at least MIN_GAP_MS between them.
+// strictly one at a time, with MIN_GAP_MS after each one finishes. (Letting
+// requests overlap got us rate-limited, see "Scryfall gotchas" in CLAUDE.md.)
+// Callers can still fire requests "in parallel" with Promise.all; they queue up.
 
 let queue: Promise<unknown> = Promise.resolve()
-let lastRequestAt = 0
 
 function enqueue<T>(task: () => Promise<T>): Promise<T> {
-  const run = queue.then(async () => {
-    const wait = lastRequestAt + MIN_GAP_MS - Date.now()
-    if (wait > 0) await sleep(wait)
-    lastRequestAt = Date.now()
-    return task()
-  })
-  // Keep the queue alive even if this task fails.
-  queue = run.catch(() => undefined)
+  const run = queue.then(task)
+  // Keep the queue alive even if this task fails, and leave a gap before the next.
+  queue = run.catch(() => undefined).then(() => sleep(MIN_GAP_MS))
   return run
+}
+
+// After a 429, every request fails straight away (without calling Scryfall)
+// until Scryfall's Retry-After time has passed.
+let blockedUntil = 0
+const DEFAULT_BLOCK_MS = 60_000
+
+function rateLimitedError() {
+  const seconds = Math.ceil((blockedUntil - Date.now()) / 1000)
+  return new ScryfallError(429, 'rate_limited', `Scryfall asked us to slow down. Try again in about ${seconds} seconds.`)
 }
 
 // --- Cache (memory + localStorage, 24h) ------------------------------------
@@ -77,43 +82,55 @@ function writeCache(key: string, data: unknown) {
 // --- Requests --------------------------------------------------------------
 
 async function fetchJson<T>(path: string): Promise<T> {
-  for (let attempt = 0; ; attempt++) {
-    let response: Response
-    try {
-      response = await fetch(API + path, { headers: { Accept: 'application/json' } })
-    } catch {
-      throw new ScryfallError(0, 'network', 'Could not reach Scryfall. Check your internet connection and try again.')
-    }
-
-    if (response.status === 429 && attempt < MAX_RETRIES) {
-      // Too many requests: back off (1s, 2s, 4s) and retry.
-      await sleep(1000 * 2 ** attempt)
-      continue
-    }
-
-    const body = (await response.json().catch(() => null)) as T | ScryfallErrorBody | null
-    if (!response.ok || !body) {
-      const err = body as ScryfallErrorBody | null
-      throw new ScryfallError(
-        response.status,
-        err?.code ?? 'unknown',
-        err?.details ?? `Scryfall returned HTTP ${response.status}.`,
-      )
-    }
-    return body as T
+  if (Date.now() < blockedUntil) throw rateLimitedError()
+  let response: Response
+  try {
+    response = await enqueue(() => {
+      // Re-check: a 429 may have arrived while this request was waiting.
+      if (Date.now() < blockedUntil) throw rateLimitedError()
+      return fetch(API + path, { headers: { Accept: 'application/json' } })
+    })
+  } catch (e) {
+    if (e instanceof ScryfallError) throw e
+    throw new ScryfallError(0, 'network', 'Could not reach Scryfall. Check your internet connection and try again.')
   }
+
+  if (response.status === 429) {
+    const retryAfter = Number(response.headers.get('Retry-After'))
+    blockedUntil = Date.now() + (retryAfter > 0 ? retryAfter * 1000 : DEFAULT_BLOCK_MS)
+    throw rateLimitedError()
+  }
+
+  const body = (await response.json().catch(() => null)) as T | ScryfallErrorBody | null
+  if (!response.ok || !body) {
+    const err = body as ScryfallErrorBody | null
+    throw new ScryfallError(
+      response.status,
+      err?.code ?? 'unknown',
+      err?.details ?? `Scryfall returned HTTP ${response.status}.`,
+    )
+  }
+  return body as T
 }
+
+/** Cached requests already on their way, so asking twice at once only fetches once. */
+const inFlight = new Map<string, Promise<unknown>>()
 
 /** GET a Scryfall API path through the throttled queue. Set `cache` for deterministic endpoints. */
 export function scryfallGet<T>(path: string, { cache = false } = {}): Promise<T> {
-  if (cache) {
-    const hit = readCache<T>(path)
-    if (hit !== undefined) return Promise.resolve(hit)
-  }
-  return enqueue(() => fetchJson<T>(path)).then((data) => {
-    if (cache) writeCache(path, data)
-    return data
-  })
+  if (!cache) return fetchJson<T>(path)
+  const hit = readCache<T>(path)
+  if (hit !== undefined) return Promise.resolve(hit)
+  const pending = inFlight.get(path)
+  if (pending) return pending as Promise<T>
+  const request = fetchJson<T>(path)
+    .then((data) => {
+      writeCache(path, data)
+      return data
+    })
+    .finally(() => inFlight.delete(path))
+  inFlight.set(path, request)
+  return request
 }
 
 /** A random card matching a search query. Never cached (it's random). */

@@ -2,6 +2,7 @@ import { loadCreatureTypes } from '../scryfall/catalog'
 import { countCards, getRandomCard, ScryfallError } from '../scryfall/client'
 import { joinClauses } from '../scryfall/query'
 import type { ScryfallCard } from '../scryfall/types'
+import { shuffle } from '../generator/colours'
 import { creatureTypes } from '../generator/modifiers'
 import type { ChallengeContext } from './types'
 
@@ -56,6 +57,25 @@ export async function drawOneOf(ctx: ChallengeContext, fragments: string[]): Pro
     }
   }
   throw new NoCardsError('No Arena cards in your commander’s colours match this (with your other rules).')
+}
+
+/**
+ * Shuffle the options, count the pool for up to `maxTries` of them (in
+ * parallel), and return the first with at least `needed` cards. If none has
+ * enough, return the biggest, so the pool check can flag it as too small.
+ */
+export async function pickFeasible<T>(
+  ctx: ChallengeContext,
+  options: T[],
+  queryFor: (option: T) => string,
+  needed: number,
+  maxTries = 8,
+): Promise<T> {
+  const tries = shuffle(options, ctx.random).slice(0, maxTries)
+  if (tries.length === 0) throw new NoCardsError('Nothing to choose from.')
+  const counts = await Promise.all(tries.map((option) => countCards(queryFor(option))))
+  const enough = tries.find((_option, i) => counts[i] >= needed)
+  return enough ?? tries[counts.indexOf(Math.max(...counts))]
 }
 
 /** Creature types of a card, using Scryfall's creature-type catalog. */

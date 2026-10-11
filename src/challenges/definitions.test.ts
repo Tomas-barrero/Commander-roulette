@@ -1,15 +1,18 @@
 import { describe, expect, it } from 'vitest'
 import type { ScryfallCard } from '../scryfall/types'
 import { defaultParams } from './conflicts'
-import { CHALLENGES, CHALLENGES_BY_ID } from './definitions'
-import type { ChallengeContext } from './types'
+import { CHALLENGES, CHALLENGES_BY_ID, forbiddenWordClause } from './definitions'
+import { poolMode, type ChallengeContext, type ParamValues } from './types'
 
 const def = (id: string) => CHALLENGES_BY_ID[id]
-const fragment = (id: string, params = defaultParams(def(id)), choice?: string) =>
+const fragment = (id: string, params: ParamValues = defaultParams(def(id)), choice?: string) =>
   def(id).buildQueryFragment!(params, choice ? { choice } : undefined)
+const quotas = (id: string, params: ParamValues = defaultParams(def(id)), choice?: string) =>
+  def(id).quotas!(params, choice ? { choice } : undefined, 'brawl')
 
 const ctxFor = (commander: Partial<ScryfallCard>): ChallengeContext => ({
   format: 'brawl',
+  nonlandTarget: 60,
   commander: { cmc: 3, type_line: 'Legendary Creature — Elf Druid', color_identity: ['G'], ...commander } as ScryfallCard,
   deckBase: 'game:arena f:brawl id<=g',
   restrictions: '',
@@ -39,16 +42,20 @@ describe('challenge definitions', () => {
     }
   })
 
-  it('auto pool challenges build a fragment; honour challenges do not', () => {
+  it('pool challenges define what their pool needs', () => {
     for (const c of CHALLENGES) {
-      if (c.pool) expect(c.buildQueryFragment).toBeDefined()
-      if (c.type === 'honour') expect(c.buildQueryFragment).toBeUndefined()
-      if (c.pool === 'quota') expect(c.quota).toBeDefined()
+      const mode = poolMode(c, defaultParams(c))
+      if (mode === 'nonland') expect(c.buildQueryFragment, c.id).toBeDefined()
+      if (mode === 'quota') expect(c.quotas, c.id).toBeDefined()
     }
+  })
+
+  it('only No mulligans is an honour rule', () => {
+    expect(CHALLENGES.filter((c) => c.type === 'honour').map((c) => c.id)).toEqual(['no-mulligans'])
   })
 })
 
-describe('query fragments', () => {
+describe('nonland fragments', () => {
   it('card type restrictions', () => {
     expect(fragment('creatureless')).toBe('-t:creature')
     expect(fragment('creatures-lands-only')).toBe('t:creature')
@@ -56,19 +63,73 @@ describe('query fragments', () => {
     expect(fragment('permanents-only')).toBe('is:permanent')
   })
 
-  it('tribal uses the chosen creature type', () => {
-    expect(fragment('tribal', defaultParams(def('tribal')), 'Elf')).toBe('t:creature t:"Elf"')
-    expect(def('tribal').quota!({ count: 12, source: 'random' })).toBe(12)
+  it('art & flavour', () => {
+    expect(fragment('art-theme', { percent: 100 }, 'hat')).toBe('art:hat')
+    expect(fragment('flavour-text')).toBe('has:flavor')
+    expect(fragment('quote-book')).toBe('ft:"—"')
+    expect(fragment('alphabet-soup', {}, 'k')).toBe('name:/^k/')
   })
 
-  it('low curve, budget and banned effects', () => {
+  it('mana, budget and banned effects', () => {
     expect(fragment('low-curve', { max: 2 })).toBe('mv<=2')
+    expect(fragment('odd-even', { parity: 'random' }, 'even')).toBe('mv:even')
     expect(fragment('commons-uncommons')).toBe('r<=uncommon')
+    expect(fragment('single-set', {}, 'dsk|Duskmourn')).toBe('e:dsk')
+    expect(fragment('recent-sets', { years: 1 })).toBe(`year>=${new Date().getFullYear()}`)
     expect(fragment('no-counterspells')).toBe('-otag:counterspell')
     expect(fragment('no-tutors')).toBe('-otag:tutor')
     expect(fragment('no-board-wipes')).toBe('-otag:board-wipe')
     expect(fragment('no-ramp')).toBe('-otag:ramp')
     expect(fragment('no-game-changers')).toBe('-is:gamechanger')
+  })
+
+  it('funky', () => {
+    expect(fragment('forbidden-words', { count: 2 }, 'target|you may')).toBe('-o:/\\btarget/ -o:/\\byou may/')
+    expect(forbiddenWordClause(':')).toBe('-o:":"')
+    expect(fragment('lipogram', { letter: 'random' }, 'a')).toBe('-name:a')
+    expect(fragment('one-word-names')).toBe('name:/^[^ ]+$/')
+    expect(fragment('short-names', { max: 9 })).toBe('name:/^.{1,9}$/')
+    expect(fragment('legends-only')).toBe('t:legendary')
+    expect(fragment('gold-rush')).toBe('c:m')
+    expect(fragment('square-deal')).toBe('(-t:creature or pow=tou)')
+    expect(fragment('wall-street')).toBe('(-t:creature or tou>pow)')
+    expect(fragment('prime-time')).toBe('(mv=2 or mv=3 or mv=5 or mv=7)')
+    expect(fragment('no-humans')).toBe('-t:human')
+  })
+})
+
+describe('quotas', () => {
+  it('tribal and type minimums', () => {
+    expect(quotas('tribal', { count: 12, source: 'random' }, 'Elf')).toEqual([
+      { label: 'Elf creatures', fragment: 't:creature t:"Elf"', needed: 12 },
+    ])
+    expect(quotas('type-minimum', { count: 8, kind: 'random' }, 'enchantment')[0]).toMatchObject({ fragment: 't:enchantment', needed: 8 })
+  })
+
+  it('type quota decodes both minimums', () => {
+    expect(quotas('type-quota', {}, 'enchantment:10|equipment:5')).toEqual([
+      { label: 'enchantments', fragment: 't:enchantment', needed: 10 },
+      { label: 'Equipment', fragment: 't:equipment', needed: 5 },
+    ])
+  })
+
+  it('art theme switches from "every card" to a quota below 100%', () => {
+    expect(poolMode(def('art-theme'), { percent: 100 })).toBe('nonland')
+    expect(poolMode(def('art-theme'), { percent: 50 })).toBe('quota')
+    expect(quotas('art-theme', { percent: 50 }, 'moon')).toEqual([{ label: 'moon art', fragment: '-t:land art:moon', needed: 30 }])
+  })
+
+  it('art bingo has one quota per theme', () => {
+    expect(quotas('art-bingo', { count: 4 }, 'hat|moon|cat').map((q) => q.fragment)).toEqual([
+      '-t:land art:hat',
+      '-t:land art:moon',
+      '-t:land art:cat',
+    ])
+  })
+
+  it('lands and budget', () => {
+    expect(quotas('no-basics')[0]).toMatchObject({ fragment: 't:land -t:basic', needed: 38 })
+    expect(quotas('wildcard-budget', { rares: 6, mythics: 2 })[0]).toMatchObject({ fragment: '-t:land r<=uncommon', needed: 52 })
   })
 })
 
@@ -82,6 +143,14 @@ describe('commander-dependent availability', () => {
     const planeswalker = ctxFor({ type_line: 'Legendary Planeswalker — Jace' })
     expect(def('tribal').unavailable!({ count: 10, source: 'commander' }, planeswalker)).toBeDefined()
     expect(def('tribal').unavailable!({ count: 10, source: 'random' }, planeswalker)).toBeUndefined()
-    expect(def('tribal').unavailable!({ count: 10, source: 'commander' }, ctxFor({}))).toBeUndefined()
+  })
+
+  it('gold rush needs a multicoloured commander', () => {
+    expect(def('gold-rush').unavailable!({}, ctxFor({ color_identity: ['G'] }))).toBeDefined()
+    expect(def('gold-rush').unavailable!({}, ctxFor({ color_identity: ['G', 'U'] }))).toBeUndefined()
+  })
+
+  it("alphabet soup uses the commander's first letter", async () => {
+    expect(await def('alphabet-soup').generate!({}, ctxFor({ name: 'Kolvori, God of Kinship' }))).toEqual({ choice: 'k' })
   })
 })

@@ -1,13 +1,14 @@
 import { useCallback, useState } from 'react'
+import { generateCommanderWithChaos, newChaosPick, runChallengesWithChaos, type ChaosPick } from './challenges/chaos'
 import { activeChallenges } from './challenges/conflicts'
-import { runChallenges, type ChallengeRun } from './challenges/engine'
+import type { ChallengeRun } from './challenges/engine'
 import { CardDisplay } from './components/CardDisplay'
 import { ChallengeList } from './components/ChallengeList'
 import { ColourPicker } from './components/ColourPicker'
 import { RulesText } from './components/RulesText'
 import { SettingsDrawer } from './components/SettingsDrawer'
 import { manualSelectionProblem } from './generator/colours'
-import { generateCommander, NoCommanderError, type GeneratedCommander } from './generator/commander'
+import { NoCommanderError, type GeneratedCommander } from './generator/commander'
 import { describeModifiers } from './generator/modifiers'
 import { ScryfallError } from './scryfall/client'
 import { useSessionState } from './state/session'
@@ -17,9 +18,7 @@ type Status = { kind: 'idle' } | { kind: 'loading' } | { kind: 'error'; title: s
 
 function describeError(e: unknown): { title: string; message: string } {
   if (e instanceof NoCommanderError) return { title: 'No commander matches', message: e.message }
-  if (e instanceof ScryfallError && e.status === 429) {
-    return { title: 'Scryfall is busy', message: 'Too many requests. Wait a few seconds and try again.' }
-  }
+  if (e instanceof ScryfallError && e.status === 429) return { title: 'Scryfall is busy', message: e.message }
   if (e instanceof ScryfallError) return { title: 'Scryfall error', message: e.message }
   return { title: 'Something went wrong', message: e instanceof Error ? e.message : String(e) }
 }
@@ -29,6 +28,7 @@ export default function App() {
   const [result, setResult] = useSessionState<GeneratedCommander | undefined>('result', undefined)
   const [generations, setGenerations] = useSessionState('generations', 0)
   const [challengeRun, setChallengeRun] = useSessionState<ChallengeRun | undefined>('challenges', undefined)
+  const [chaosPick, setChaosPick] = useSessionState<ChaosPick | undefined>('chaos', undefined)
   const [status, setStatus] = useState<Status>({ kind: 'idle' })
   const [challengeStatus, setChallengeStatus] = useState<Status>({ kind: 'idle' })
   const [drawerOpen, setDrawerOpen] = useState(false)
@@ -40,19 +40,29 @@ export default function App() {
   const activeCount =
     describeModifiers(settings.modifiers).length +
     (settings.modifiers.rerollBudget.enabled ? 1 : 0) +
-    activeChallenges(settings.challenges).length
+    activeChallenges(settings.challenges).length +
+    (settings.chaos.enabled ? settings.chaos.count : 0)
 
   // Reroll budget: the first commander of the session is free.
   const budget = settings.modifiers.rerollBudget
   const rerollsLeft = Math.max(0, budget.rerolls - Math.max(0, generations - 1))
   const outOfRerolls = budget.enabled && generations > 0 && rerollsLeft === 0
 
-  /** Roll challenges for a commander. `keep` keeps unchanged results; `reroll` re-rolls just that one. */
-  async function rollChallenges(commander: GeneratedCommander, s: Settings, options: { keep?: boolean; reroll?: string } = {}) {
+  /**
+   * Roll challenges for a commander, including chaos picks if there are any.
+   * `keep` keeps unchanged results; `reroll` re-rolls one challenge; `swap` swaps one chaos pick.
+   */
+  async function rollChallenges(
+    commander: GeneratedCommander,
+    s: Settings,
+    options: { pick?: ChaosPick; keep?: boolean; reroll?: string; swap?: string } = {},
+  ) {
     setChallengeStatus({ kind: 'loading' })
     try {
-      const previous = options.keep || options.reroll ? challengeRun : undefined
-      setChallengeRun(await runChallenges(s, commander.card, { previous, reroll: options.reroll }))
+      const previous = options.keep || options.reroll || options.swap ? challengeRun : undefined
+      const { run, pick } = await runChallengesWithChaos(s, commander.card, { ...options, previous })
+      setChallengeRun(run)
+      setChaosPick(pick)
       setChallengeStatus({ kind: 'idle' })
     } catch (e) {
       setChallengeStatus({ kind: 'error', ...describeError(e) })
@@ -62,12 +72,13 @@ export default function App() {
   async function generate() {
     setStatus({ kind: 'loading' })
     try {
-      const commander = await generateCommander(settings)
+      const { commander, pick } = await generateCommanderWithChaos(settings)
       setResult(commander)
       setChallengeRun(undefined)
+      setChaosPick(pick)
       setGenerations((n) => n + 1)
       setStatus({ kind: 'idle' })
-      await rollChallenges(commander, settings)
+      await rollChallenges(commander, settings, { pick })
     } catch (e) {
       setStatus({ kind: 'error', ...describeError(e) })
     }
@@ -77,7 +88,13 @@ export default function App() {
   function disableChallenge(id: string) {
     const next = { ...settings, challenges: { ...settings.challenges, [id]: { ...settings.challenges[id], enabled: false } } }
     setSettings(next)
-    if (result) rollChallenges(result, next, { keep: true })
+    if (result) rollChallenges(result, next, { keep: true, pick: chaosPick })
+  }
+
+  /** "Lock commander & reroll challenges": with chaos on, re-pick the random challenges but keep the commander's modifiers. */
+  function rerollAllChallenges(commander: GeneratedCommander) {
+    const pick = settings.chaos.enabled ? newChaosPick(settings, Math.random, chaosPick?.modifiers ?? []) : undefined
+    rollChallenges(commander, settings, { pick })
   }
 
   return (
@@ -115,10 +132,10 @@ export default function App() {
             >
               {loading ? 'Shuffling…' : result ? '🎲 Reroll' : '🎲 Generate commander'}
             </button>
-            {result && activeChallenges(settings.challenges).length > 0 && (
+            {result && (activeChallenges(settings.challenges).length > 0 || settings.chaos.enabled) && (
               <button
                 type="button"
-                onClick={() => rollChallenges(result, settings)}
+                onClick={() => rerollAllChallenges(result)}
                 disabled={loading || challengesBusy}
                 className="rounded-lg border border-amber-400/60 px-4 py-1.5 text-sm text-amber-100 transition hover:bg-amber-400/10 disabled:cursor-not-allowed disabled:opacity-50"
               >
@@ -179,7 +196,9 @@ export default function App() {
                   <ChallengeList
                     run={challengeRun}
                     busy={challengesBusy}
-                    onReroll={(id) => rollChallenges(result, settings, { reroll: id })}
+                    chaosIds={chaosPick?.challenges}
+                    onReroll={(id) => rollChallenges(result, settings, { reroll: id, pick: chaosPick })}
+                    onSwap={(id) => rollChallenges(result, settings, { swap: id, pick: chaosPick })}
                     onDisable={disableChallenge}
                   />
                 </div>

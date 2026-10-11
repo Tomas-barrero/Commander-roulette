@@ -16,7 +16,7 @@ Personal/fan project. Prefer simple and working over clever and abstract.
 API base: `https://api.scryfall.com`. Docs: https://scryfall.com/docs/api and search syntax at https://scryfall.com/docs/syntax.
 
 ### Scryfall rules we MUST follow
-- **Rate limit:** 50–100 ms delay between requests to `api.scryfall.com`. Build one shared request queue/throttle and send all calls through it. Image hosts (`*.scryfall.io`) aren't rate limited.
+- **Rate limit:** 50–100 ms delay between requests to `api.scryfall.com`. Build one shared request queue/throttle and send all calls through it. Requests run **one at a time** (the gap starts after the previous response); don't let them overlap. On a 429, stop *all* calls until `Retry-After` (default 60s); never auto-retry quickly. Image hosts (`*.scryfall.io`) aren't rate limited.
 - **Cache** responses (in memory + localStorage with a timestamp) for at least 24 hours. Feasibility counts and symbol data especially.
 - **Images:** never crop, cover, blur, recolour, stretch or watermark card images. When showing the **`art_crop`**, show the **artist name** (and a link to the full card) in the same view.
 - Don't use Scryfall's logo or imply endorsement. Don't paywall anything.
@@ -61,9 +61,9 @@ Show the chosen identity as mana pips, and the guild/shard/wedge name where one 
 ## Feature 3: Challenges & modifiers
 
 Each challenge is a **toggle in a Settings drawer**, grouped by category, with its own parameters (number inputs, dropdowns) and a difficulty rating (1–3 skulls). Also:
-- **Chaos mode**: randomly enable N challenges (N chosen by a slider), weighted by a difficulty dial
+- **Chaos mode**: randomly enable N challenges (N chosen by a slider) from **every** category, commander modifiers included, on top of the ones switched on manually, weighted by a difficulty dial (easy / mixed / hard). Random picks that are skipped, fail or leave too small a pool are swapped (a couple of rounds), then dropped. Each chaos pick has a Swap button.
 - **Feasibility check**: for every challenge that narrows the card pool, query Scryfall for `total_cards` within the commander's identity + Arena + format, and show the pool size. **Warn or block** if it's too small to build a deck (e.g. an art theme with only 30 legal cards in that identity). Offer "reroll this challenge".
-- Each challenge has a `type`: **auto** (the app generates or validates something with Scryfall) or **honour** (a rule I follow myself, just displayed)
+- Each challenge has a `type`: **auto** (the app generates or validates something with Scryfall) or **honour** (a rule I follow myself, just displayed). **Decision (2026-10-11): no honour rules except No mulligans** (Miscellaneous category). Don't add gameplay honour rules.
 
 ### Commander modifiers
 1. **Rarity of commander**: only uncommon (or common/uncommon) commanders
@@ -97,7 +97,7 @@ Each challenge is a **toggle in a Settings drawer**, grouped by category, with i
 23. **Same artist**: at least N cards by one random artist (`a:`)
 24. **Flavour text required**: every nonland card has flavour text (`has:flavor`, verify syntax)
 25. **Alphabet soup**: every nonland card's name starts with the same letter as the commander's
-26. **Name chain**: each card's name must start with the last letter of the previous one (honour)
+26. ~~**Name chain**~~ (removed: honour rule)
 
 ### Mana & curve
 27. **Low curve**: no nonland card over MV N (default 3)
@@ -118,12 +118,15 @@ Each challenge is a **toggle in a Settings drawer**, grouped by category, with i
 38. **No ramp spells**: lands-only mana
 39. **No Game Changers** (`is:gamechanger`)
 
-### Alternate goals (honour)
-40. **Alt win-con**: deck must include and try to win with an "you win the game" card (`o:"win the game"`)
-41. **Commander can't attack**
-42. **Commander tax challenge**: can't cast the commander before turn N
-43. **Pacifist**: can't attack until turn N
-44. **Mill-out**: you can only win by milling (or by poison, or commander damage, randomly chosen)
+### Alternate goals
+40. **Alt win-con**: a generated must-include "you win the game" card (`o:"you win the game"`)
+41–44. ~~Commander can't attack, Commander tax, Pacifist, Mill-out~~ (removed: honour rules)
+
+### Funky (added 2026-10-11, pools verified live)
+Forbidden words (1–3 random words banned from rules text), Lipogram (no letter X in names), One-word names, Short names, Legends only, Gold rush (all multicoloured), Square deal (power = toughness), Wall street (toughness > power), Prime time (MV 2/3/5/7), French vanilla club (≥ N), Arena exclusive (≥ N perpetually/seek cards), No Humans. Art bingo (3 random art tags × N cards) lives under Art & flavour.
+
+### Miscellaneous
+- **No mulligans** (honour, the only one)
 
 Keep the challenge definitions **data-driven**: one array of challenge objects in `src/challenges/definitions.ts` with id, name, description, category, difficulty, params, type (auto/honour), a `buildQueryFragment(params, ctx)` for auto filters, and a `generate(ctx)` for things like must-include cards. Adding a new challenge should mean adding one object.
 
@@ -220,6 +223,17 @@ Verified against the live API on 2026-10-11 (counts are for `game:arena f:brawl 
 
 ## Challenge engine notes
 
+- Deck challenges live in `src/challenges/definitions.ts` (46 now). Chaos mode is `src/challenges/chaos.ts`. Rules with several "at least N" checks return multiple `quotas`; land quotas set `lands: true` so the nonland restrictions don't apply to them.
 - Deck challenges live in `src/challenges/definitions.ts`. Commander modifiers (1–9) stay in `src/generator/modifiers.ts`, because they run *before* a commander exists and random tribe/set and the reroll budget need special handling.
 - `pool: 'nonland'` challenges ("every nonland card must…") combine into `ctx.restrictions`, which every generated must-include card also has to match. `pool: 'quota'` challenges ("at least N…") are checked against the deck base + restrictions.
 - Feasibility: a pool smaller than the nonland cards a deck needs (60 for Brawl, 35 for Standard Brawl, or N for a quota) is "too small"; under twice that is "tight".
+
+### Rate limiting (learned the hard way, 2026-10-11)
+- Letting requests overlap (starting one every 100ms without waiting for the previous response) plus a long testing session got a **429**: "try again after 60 seconds. DO NOT IGNORE THIS WARNING, FAILURE TO ACT WILL RESULT IN A NETWORK BLOCK." Strictly sequential + 100ms had run for hours without one. The client is sequential again and hard-stops on 429.
+- scryfall.com/docs pages return 403 to automated fetchers, so the per-endpoint limits couldn't be checked from here. If someone can read https://scryfall.com/docs/api/rate-limits, record the numbers here.
+- Keep live test runs small, and leave a pause between big batches.
+
+### More gotchas (challenge brainstorm, 2026-10-11)
+- **Regex limits:** `name:/^(.).* \1/` (backreferences) and `\S` silently match nothing (0 results, no warning). `o:/^.{0,80}$/` is rejected ("Too much repetition") and ignored with a warning. Simple regexes like `name:/^[^ ]+$/` (one-word names) and `name:/^.{1,10}$/` work.
+- **Art tag pools vary hugely by colour,** so random art themes must be checked at runtime. Nonland pools in Dimir (UB) vs mono-green: `art:pirate` 111 vs 5, `art:tree` 278 vs 563, `art:mushroom` 27 vs 74, `art:rat` 113 vs 9. `art:staircase` doesn't exist (0).
+- `-name:e` works as a lipogram filter (UB 762, G 491 nonland cards). `kw:flying` works. `pow=tou` and `tou>pow` work as comparisons. `is:vanilla` (UB 42) and `is:frenchvanilla` (UB 113) exist. `has:flavor` works (and so does `ft:/./`).
