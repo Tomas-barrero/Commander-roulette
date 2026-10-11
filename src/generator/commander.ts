@@ -8,10 +8,10 @@ import { creatureTypes, describeModifiers, modifierClauses, modifierConflict, pi
 
 export interface GeneratedCommander {
   card: ScryfallCard
-  /** The colour filter that produced this commander. */
-  colourFilter: ColourFilter
-  /** The exact Scryfall query used. */
-  query: string
+  /** The colour filter that produced this commander (not kept for shared or restored ones). */
+  colourFilter?: ColourFilter
+  /** The exact Scryfall query used (not kept for shared or restored ones). */
+  query?: string
   /** The creature type, when the Creature type modifier is on. */
   tribe?: string
   /** The set, when Era is "random set". */

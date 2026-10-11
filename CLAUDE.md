@@ -237,3 +237,10 @@ Verified against the live API on 2026-10-11 (counts are for `game:arena f:brawl 
 - **Regex limits:** `name:/^(.).* \1/` (backreferences) and `\S` silently match nothing (0 results, no warning). `o:/^.{0,80}$/` is rejected ("Too much repetition") and ignored with a warning. Simple regexes like `name:/^[^ ]+$/` (one-word names) and `name:/^.{1,10}$/` work.
 - **Art tag pools vary hugely by colour,** so random art themes must be checked at runtime. Nonland pools in Dimir (UB) vs mono-green: `art:pirate` 111 vs 5, `art:tree` 278 vs 563, `art:mushroom` 27 vs 74, `art:rat` 113 vs 9. `art:staircase` doesn't exist (0).
 - `-name:e` works as a lipogram filter (UB 762, G 491 nonland cards). `kw:flying` works. `pow=tou` and `tou>pow` work as comparisons. `is:vanilla` (UB 42) and `is:frenchvanilla` (UB 113) exist. `has:flavor` works (and so does `ft:/./`).
+
+## Export, share & history notes
+
+- **Share links** use the URL hash (`#share=<base64url JSON>`), so nothing reaches a server and any static host works. The payload (`src/state/share.ts`) holds the commander's Scryfall id, its restriction labels, each rolled challenge (id, params, choice, card ids), chaos picks and the sender's settings as a diff from the defaults. A heavy roll (12 cards + 5 rules) is about 1.3k characters.
+- Opening a link or a history entry fetches every card in **one** `POST /cards/collection` request (up to 75 ids), then re-runs the challenges keeping everything rolled, which only re-checks pool counts (usually cached). The receiver's own settings are untouched unless they click "Use their settings".
+- History (last 20) and favourites (up to 100) live in localStorage as share payloads plus a thumbnail URL, not full card objects, which would be too big.
+- **Arena export:** multi-face cards use the front face name (`Delver of Secrets`, `Bonecrusher Giant`). ⚠️ Not yet tested in Arena itself, especially split cards (e.g. `Fire // Ice`). If Arena rejects one, try the `Fire /// Ice` form, then update `arenaName` and record the answer here.

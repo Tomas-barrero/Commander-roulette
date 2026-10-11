@@ -1,18 +1,34 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { generateCommanderWithChaos, newChaosPick, runChallengesWithChaos, type ChaosPick } from './challenges/chaos'
 import { activeChallenges } from './challenges/conflicts'
 import type { ChallengeRun } from './challenges/engine'
 import { CardDisplay } from './components/CardDisplay'
 import { ChallengeList } from './components/ChallengeList'
+import { copyText } from './components/clipboard'
 import { ColourPicker } from './components/ColourPicker'
+import { HistoryPanel } from './components/HistoryPanel'
 import { RulesText } from './components/RulesText'
 import { SettingsDrawer } from './components/SettingsDrawer'
 import { manualSelectionProblem } from './generator/colours'
 import { NoCommanderError, type GeneratedCommander } from './generator/commander'
 import { describeModifiers } from './generator/modifiers'
 import { ScryfallError } from './scryfall/client'
+import { frontImage } from './scryfall/images'
+import { arenaDeckList } from './state/arenaExport'
+import { FAVOURITES_LIMIT, HISTORY_LIMIT, sameShare, upsertEntry, useEntryList, type HistoryEntry } from './state/history'
 import { useSessionState } from './state/session'
 import { useSettings, type Settings } from './state/settings'
+import {
+  buildSharePayload,
+  loadSharedChallenge,
+  readShareFromHash,
+  SHARE_PREFIX,
+  settingsFromShare,
+  shareUrl,
+  type SharePayload,
+} from './state/share'
+
+const newKey = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
 
 type Status = { kind: 'idle' } | { kind: 'loading' } | { kind: 'error'; title: string; message: string }
 
@@ -29,6 +45,14 @@ export default function App() {
   const [generations, setGenerations] = useSessionState('generations', 0)
   const [challengeRun, setChallengeRun] = useSessionState<ChallengeRun | undefined>('challenges', undefined)
   const [chaosPick, setChaosPick] = useSessionState<ChaosPick | undefined>('chaos', undefined)
+  /** Identifies this roll in history; stays the same while you reroll its challenges. */
+  const [entryKey, setEntryKey] = useSessionState<string | undefined>('entry', undefined)
+  /** The settings this roll was made with (a shared link carries the sender's). */
+  const [rolledWith, setRolledWith] = useSessionState<Settings | undefined>('rolled-with', undefined)
+  const [sharedFrom, setSharedFrom] = useState<SharePayload>()
+  const [history, setHistory] = useEntryList('commander-roulette:history')
+  const [favourites, setFavourites] = useEntryList('commander-roulette:favourites')
+  const [toast, setToast] = useState<string>()
   const [status, setStatus] = useState<Status>({ kind: 'idle' })
   const [challengeStatus, setChallengeStatus] = useState<Status>({ kind: 'idle' })
   const [drawerOpen, setDrawerOpen] = useState(false)
@@ -63,6 +87,7 @@ export default function App() {
       const { run, pick } = await runChallengesWithChaos(s, commander.card, { ...options, previous })
       setChallengeRun(run)
       setChaosPick(pick)
+      setRolledWith(s)
       setChallengeStatus({ kind: 'idle' })
     } catch (e) {
       setChallengeStatus({ kind: 'error', ...describeError(e) })
@@ -76,6 +101,9 @@ export default function App() {
       setResult(commander)
       setChallengeRun(undefined)
       setChaosPick(pick)
+      setEntryKey(newKey())
+      setRolledWith(settings)
+      setSharedFrom(undefined)
       setGenerations((n) => n + 1)
       setStatus({ kind: 'idle' })
       await rollChallenges(commander, settings, { pick })
@@ -96,6 +124,98 @@ export default function App() {
     const pick = settings.chaos.enabled ? newChaosPick(settings, Math.random, chaosPick?.modifiers ?? []) : undefined
     rollChallenges(commander, settings, { pick })
   }
+
+  /** Reopen a shared link or a history/favourites entry. Doesn't use up rerolls. */
+  async function openPayload(payload: SharePayload, { key, shared = false }: { key: string; shared?: boolean }) {
+    setStatus({ kind: 'loading' })
+    setChallengeStatus({ kind: 'idle' })
+    try {
+      const loaded = await loadSharedChallenge(payload)
+      setResult(loaded.commander)
+      setChallengeRun(loaded.run)
+      setChaosPick(loaded.pick)
+      setEntryKey(key)
+      setRolledWith(settingsFromShare(payload))
+      setSharedFrom(shared ? payload : undefined)
+      setStatus({ kind: 'idle' })
+      window.scrollTo({ top: 0, behavior: 'smooth' })
+    } catch (e) {
+      setStatus({ kind: 'error', ...describeError(e) })
+    }
+  }
+
+  // Open a #share=… link (on load, or when one is pasted into this tab), then tidy the URL.
+  useEffect(() => {
+    const openFromHash = () => {
+      const hash = window.location.hash
+      if (!hash.startsWith(SHARE_PREFIX)) return
+      window.history.replaceState(null, '', window.location.pathname + window.location.search)
+      const payload = readShareFromHash(hash)
+      if (payload) openPayload(payload, { key: newKey(), shared: true })
+      else setStatus({ kind: 'error', title: 'Broken share link', message: 'That link looks cut off or damaged. Ask for it again.' })
+    }
+    openFromHash()
+    window.addEventListener('hashchange', openFromHash)
+    return () => window.removeEventListener('hashchange', openFromHash)
+    // Only on mount: openPayload reads the latest state when it runs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  /** The current roll as a history entry; also the source of share links and favourites. */
+  const currentEntry = useMemo<Omit<HistoryEntry, 'at'> | undefined>(() => {
+    if (!result || !entryKey) return undefined
+    return {
+      key: entryKey,
+      name: result.card.name,
+      image: frontImage(result.card),
+      identity: result.card.color_identity,
+      share: buildSharePayload(rolledWith ?? settings, result, challengeRun, chaosPick),
+    }
+  }, [result, entryKey, rolledWith, settings, challengeRun, chaosPick])
+
+  // Keep the history up to date, once challenges have finished rolling.
+  useEffect(() => {
+    if (!currentEntry || challengesBusy) return
+    setHistory((list) =>
+      list.some((e) => e.key === currentEntry.key && sameShare(e.share, currentEntry.share))
+        ? list
+        : upsertEntry(list, { ...currentEntry, at: Date.now() }, HISTORY_LIMIT),
+    )
+  }, [currentEntry, challengesBusy, setHistory])
+
+  const isFavourite =
+    !!currentEntry && favourites.some((f) => f.key === currentEntry.key && sameShare(f.share, currentEntry.share))
+  const mustIncludes = challengeRun?.outcomes.flatMap((o) => o.generated?.cards ?? []) ?? []
+
+  function flash(message: string) {
+    setToast(message)
+    window.setTimeout(() => setToast((t) => (t === message ? undefined : t)), 3000)
+  }
+
+  function toggleFavourite() {
+    if (!currentEntry) return
+    setFavourites((list) =>
+      isFavourite
+        ? list.filter((f) => f.key !== currentEntry.key)
+        : upsertEntry(list, { ...currentEntry, at: Date.now() }, FAVOURITES_LIMIT),
+    )
+    flash(isFavourite ? 'Removed from favourites.' : 'Saved to favourites.')
+  }
+
+  async function copyShareLink() {
+    if (!currentEntry) return
+    const ok = await copyText(shareUrl(currentEntry.share))
+    flash(ok ? 'Share link copied. Send it to a friend!' : 'Couldn’t copy: your browser blocked the clipboard.')
+  }
+
+  async function copyForArena() {
+    if (!result) return
+    const ok = await copyText(arenaDeckList(result.card, mustIncludes))
+    flash(ok ? 'Copied! In Arena: Decks → Import.' : 'Couldn’t copy: your browser blocked the clipboard.')
+  }
+
+  const actionButton =
+    'rounded-lg border border-stone-600 px-4 py-2 text-sm text-stone-200 transition hover:border-amber-300 hover:text-amber-100 disabled:opacity-50'
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -168,6 +288,25 @@ export default function App() {
         ) : (
           result && (
             <section className="space-y-6">
+              {sharedFrom && (
+                <div className="flex flex-wrap items-center justify-center gap-3 rounded-lg border border-sky-700 bg-sky-950/50 p-3 text-sm text-sky-100">
+                  <span>🔗 Someone shared this challenge with you. Rerolling uses your own settings.</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSettings(settingsFromShare(sharedFrom))
+                      setSharedFrom(undefined)
+                      flash('Now using their settings.')
+                    }}
+                    className="rounded border border-sky-500 px-2 py-0.5 hover:bg-sky-800"
+                  >
+                    Use their settings
+                  </button>
+                  <button type="button" onClick={() => setSharedFrom(undefined)} aria-label="Dismiss" className="text-sky-300 hover:text-white">
+                    ×
+                  </button>
+                </div>
+              )}
               {result.restrictions.length > 0 && (
                 <ul className="flex flex-wrap justify-center gap-2" aria-label="Commander restrictions">
                   {result.restrictions.map((r) => (
@@ -180,6 +319,30 @@ export default function App() {
               <div className="flex flex-col items-center gap-8 md:flex-row md:items-start md:justify-center">
                 <CardDisplay key={result.card.id} card={result.card} />
                 <RulesText card={result.card} />
+              </div>
+
+              <div className="flex flex-wrap justify-center gap-3">
+                <button
+                  type="button"
+                  onClick={toggleFavourite}
+                  disabled={challengesBusy}
+                  aria-pressed={isFavourite}
+                  className={actionButton}
+                >
+                  {isFavourite ? '★ Favourited' : '☆ Favourite'}
+                </button>
+                <button type="button" onClick={copyShareLink} disabled={challengesBusy} className={actionButton}>
+                  🔗 Copy share link
+                </button>
+                <button
+                  type="button"
+                  onClick={copyForArena}
+                  disabled={challengesBusy}
+                  title="Commander + must-include cards in Arena’s import format"
+                  className={actionButton}
+                >
+                  📋 Copy for Arena{mustIncludes.length ? ` (${mustIncludes.length + 1} cards)` : ''}
+                </button>
               </div>
 
               {challengeStatus.kind === 'error' && (
@@ -215,7 +378,26 @@ export default function App() {
         {!result && !loading && status.kind === 'idle' && (
           <p className="py-16 text-center text-stone-500">Pick your colours and hit Generate.</p>
         )}
+
+        <HistoryPanel
+          history={history}
+          favourites={favourites}
+          currentKey={entryKey}
+          busy={loading || challengesBusy}
+          onOpen={(entry) => openPayload(entry.share, { key: entry.key })}
+          onRemoveFavourite={(key) => setFavourites((list) => list.filter((f) => f.key !== key))}
+          onClearHistory={() => setHistory([])}
+        />
       </main>
+
+      {toast && (
+        <div
+          role="status"
+          className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-lg bg-stone-100 px-4 py-2 text-sm font-medium text-stone-900 shadow-2xl"
+        >
+          {toast}
+        </div>
+      )}
 
       <footer className="border-t border-stone-800 px-4 py-4 text-center text-xs text-stone-500">
         Commander Roulette is unofficial Fan Content permitted under the Fan Content Policy. Not approved/endorsed by

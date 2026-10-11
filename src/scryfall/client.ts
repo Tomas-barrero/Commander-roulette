@@ -81,14 +81,14 @@ function writeCache(key: string, data: unknown) {
 
 // --- Requests --------------------------------------------------------------
 
-async function fetchJson<T>(path: string): Promise<T> {
+async function fetchJson<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (Date.now() < blockedUntil) throw rateLimitedError()
   let response: Response
   try {
     response = await enqueue(() => {
       // Re-check: a 429 may have arrived while this request was waiting.
       if (Date.now() < blockedUntil) throw rateLimitedError()
-      return fetch(API + path, { headers: { Accept: 'application/json' } })
+      return fetch(API + path, { ...init, headers: { Accept: 'application/json', ...init.headers } })
     })
   } catch (e) {
     if (e instanceof ScryfallError) throw e
@@ -150,4 +150,19 @@ export async function countCards(query: string): Promise<number> {
     if (e instanceof ScryfallError && e.status === 404) return 0
     throw e
   }
+}
+
+/** Specific printings by Scryfall id, in one request per 75 cards. Missing ids are left out. */
+export async function getCardsByIds(ids: string[]): Promise<ScryfallCard[]> {
+  const unique = [...new Set(ids)]
+  const cards: ScryfallCard[] = []
+  for (let i = 0; i < unique.length; i += 75) {
+    const list = await fetchJson<ScryfallList<ScryfallCard>>('/cards/collection', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ identifiers: unique.slice(i, i + 75).map((id) => ({ id })) }),
+    })
+    cards.push(...list.data)
+  }
+  return cards
 }

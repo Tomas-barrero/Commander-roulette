@@ -2,12 +2,10 @@ import { useEffect, useState } from 'react'
 import { CHALLENGES_BY_ID } from '../challenges/definitions'
 import type { ChallengeRun, PoolCheck } from '../challenges/engine'
 import { CATEGORIES } from '../challenges/types'
+import { frontImage } from '../scryfall/images'
 import type { ScryfallCard } from '../scryfall/types'
 import { TypeBadge } from './ChallengeSettings'
 import { Skulls } from './controls'
-
-const frontImage = (card: ScryfallCard, size: 'normal' | 'png') =>
-  (card.image_uris ?? card.card_faces?.[0]?.image_uris)?.[size]
 
 const scryfallSearch = (query: string) => `https://scryfall.com/search?q=${encodeURIComponent(query)}`
 
