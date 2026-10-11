@@ -3,6 +3,7 @@
 
 import { generateCommander, NoCommanderError, type GeneratedCommander } from '../generator/commander'
 import { MODIFIER_INFO, modifierConflict, type Difficulty, type ModifierId } from '../generator/modifiers'
+import { generateSecretCommander } from '../generator/secret'
 import type { ScryfallCard } from '../scryfall/types'
 import type { Settings } from '../state/settings'
 import { blockedBy, conflictsOf } from './conflicts'
@@ -118,6 +119,11 @@ export async function generateCommanderWithChaos(
   settings: Settings,
   random: () => number = Math.random,
 ): Promise<{ commander: GeneratedCommander; pick?: ChaosPick }> {
+  // Secret commander mode: commander modifiers don't apply, so chaos only adds deck challenges.
+  if (settings.secret.enabled) {
+    const pick = settings.chaos.enabled ? newChaosPick(settings, random, []) : undefined
+    return { commander: await generateSecretCommander(settings, random), pick }
+  }
   if (!settings.chaos.enabled) return { commander: await generateCommander(settings) }
   for (let attempt = 0; ; attempt++) {
     // After a few impossible combinations, fall back to deck challenges only.

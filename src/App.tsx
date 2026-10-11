@@ -9,11 +9,13 @@ import { copyText } from './components/clipboard'
 import { ColourPicker } from './components/ColourPicker'
 import { HistoryPanel } from './components/HistoryPanel'
 import { RerollBudget } from './components/RerollBudget'
+import { SecretModeControl, SecretPanel } from './components/SecretPanel'
 import { RulesText } from './components/RulesText'
 import { SettingsDrawer } from './components/SettingsDrawer'
 import { manualSelectionProblem } from './generator/colours'
 import { NoCommanderError, type GeneratedCommander } from './generator/commander'
 import { describeModifiers } from './generator/modifiers'
+import { challengeCard } from './generator/secret'
 import { ScryfallError } from './scryfall/client'
 import { frontImage } from './scryfall/images'
 import { arenaDeckList } from './state/arenaExport'
@@ -49,6 +51,8 @@ export default function App() {
   const [chaosPick, setChaosPick] = useSessionState<ChaosPick | undefined>('chaos', undefined)
   /** Identifies this roll in history; stays the same while you reroll its challenges. */
   const [entryKey, setEntryKey] = useSessionState<string | undefined>('entry', undefined)
+  /** Secret commander mode: which suggested commander you're leading with. */
+  const [secretChoice, setSecretChoice] = useSessionState('secret-choice', 0)
   /** The settings this roll was made with (a shared link carries the sender's). */
   const [rolledWith, setRolledWith] = useSessionState<Settings | undefined>('rolled-with', undefined)
   const [sharedFrom, setSharedFrom] = useState<SharePayload>()
@@ -93,7 +97,7 @@ export default function App() {
     setChallengeStatus({ kind: 'loading' })
     try {
       const previous = options.keep || options.reroll || options.swap ? challengeRun : undefined
-      const { run, pick } = await runChallengesWithChaos(s, commander.card, { ...options, previous })
+      const { run, pick } = await runChallengesWithChaos(s, challengeCard(commander), { ...options, previous })
       setChallengeRun(run)
       setChaosPick(pick)
       setRolledWith(s)
@@ -111,6 +115,7 @@ export default function App() {
       setChallengeRun(undefined)
       setChaosPick(pick)
       setEntryKey(newKey())
+      setSecretChoice(0)
       setRolledWith(settings)
       setSharedFrom(undefined)
       if (budget.enabled) setGenerations((n) => n + 1)
@@ -144,6 +149,7 @@ export default function App() {
       setChallengeRun(loaded.run)
       setChaosPick(loaded.pick)
       setEntryKey(key)
+      setSecretChoice(0)
       setRolledWith(settingsFromShare(payload))
       setSharedFrom(shared ? payload : undefined)
       setStatus({ kind: 'idle' })
@@ -195,6 +201,8 @@ export default function App() {
   const isFavourite =
     !!currentEntry && favourites.some((f) => f.key === currentEntry.key && sameShare(f.share, currentEntry.share))
   const mustIncludes = challengeRun?.outcomes.flatMap((o) => o.generated?.cards ?? []) ?? []
+  // Commander + must-includes (+ the secret card in secret mode).
+  const arenaCount = mustIncludes.length + (result?.secret ? 2 : 1)
 
   function flash(message: string) {
     setToast(message)
@@ -219,7 +227,11 @@ export default function App() {
 
   async function copyForArena() {
     if (!result) return
-    const ok = await copyText(arenaDeckList(result.card, mustIncludes))
+    // Secret mode: the commander you picked leads, and the secret card goes in the deck.
+    const leader = result.secret?.commanders[secretChoice]?.card
+    const ok = await copyText(
+      leader ? arenaDeckList(leader, [result.card, ...mustIncludes]) : arenaDeckList(result.card, mustIncludes),
+    )
     flash(ok ? 'Copied! In Arena: Decks → Import.' : 'Couldn’t copy: your browser blocked the clipboard.')
   }
 
@@ -261,7 +273,13 @@ export default function App() {
               disabled={loading || !!problem || outOfRerolls}
               className="rounded-lg bg-amber-400 px-6 py-3 text-lg font-bold text-stone-900 shadow-lg transition hover:bg-amber-300 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {loading ? 'Shuffling…' : result ? '🎲 Reroll' : '🎲 Generate commander'}
+              {loading
+                ? 'Shuffling…'
+                : result
+                  ? '🎲 Reroll'
+                  : settings.secret.enabled
+                    ? '🤫 Roll a secret commander'
+                    : '🎲 Generate commander'}
             </button>
             {result && (activeChallenges(settings.challenges).length > 0 || settings.chaos.enabled) && (
               <button
@@ -274,6 +292,7 @@ export default function App() {
               </button>
             )}
             {problem && <p className="text-sm text-amber-200/80">{problem}</p>}
+            <SecretModeControl value={settings.secret} onChange={(secret) => setSettings({ ...settings, secret })} />
             <RerollBudget budget={budget} onChange={setBudget} rolls={generations} onNewSession={() => setGenerations(0)} />
           </div>
         </section>
@@ -327,6 +346,15 @@ export default function App() {
                 <RulesText card={result.card} />
               </div>
 
+              {result.secret && (
+                <SecretPanel
+                  secret={result.secret}
+                  secretName={result.card.name}
+                  chosen={secretChoice}
+                  onChoose={setSecretChoice}
+                />
+              )}
+
               <div className="flex flex-wrap justify-center gap-3">
                 <button
                   type="button"
@@ -347,7 +375,7 @@ export default function App() {
                   title="Commander + must-include cards in Arena’s import format"
                   className={actionButton}
                 >
-                  📋 Copy for Arena{mustIncludes.length ? ` (${mustIncludes.length + 1} cards)` : ''}
+                  📋 Copy for Arena{arenaCount > 1 ? ` (${arenaCount} cards)` : ''}
                 </button>
               </div>
 

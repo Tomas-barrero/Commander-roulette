@@ -3,6 +3,7 @@ import { DEFAULT_CHAOS, type ChaosSettings } from '../challenges/chaos'
 import { defaultChallengeSettings, type ChallengeSettings } from '../challenges/conflicts'
 import { DEFAULT_COLOUR_SETTINGS, type ColourSettings } from '../generator/colours'
 import { DEFAULT_MODIFIERS, type CommanderModifiers } from '../generator/modifiers'
+import { DEFAULT_SECRET, type SecretSettings } from '../generator/secret'
 import type { Format } from '../scryfall/types'
 
 export interface Settings {
@@ -11,6 +12,7 @@ export interface Settings {
   modifiers: CommanderModifiers
   challenges: ChallengeSettings
   chaos: ChaosSettings
+  secret: SecretSettings
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -19,6 +21,7 @@ export const DEFAULT_SETTINGS: Settings = {
   modifiers: DEFAULT_MODIFIERS,
   challenges: defaultChallengeSettings(),
   chaos: DEFAULT_CHAOS,
+  secret: DEFAULT_SECRET,
 }
 
 const STORAGE_KEY = 'commander-roulette:settings'

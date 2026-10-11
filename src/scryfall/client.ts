@@ -69,14 +69,26 @@ function readCache<T>(key: string): T | undefined {
   return entry.data as T
 }
 
-function writeCache(key: string, data: unknown) {
+/** Save to the memory cache, and (if `persist`) to localStorage. Keep persisted values small. */
+function writeCache(key: string, data: unknown, persist = true) {
   const entry: CacheEntry = { at: Date.now(), data }
   memoryCache.set(key, entry)
+  if (!persist) return
   try {
     localStorage.setItem(CACHE_PREFIX + key, JSON.stringify(entry))
   } catch {
     // Quota exceeded or storage blocked: the memory cache still works
   }
+}
+
+// Older versions saved whole search pages (up to 175 cards) to localStorage
+// just to remember a count, which filled the storage quota. Clear those out.
+try {
+  for (const key of Object.keys(localStorage)) {
+    if (key.startsWith(CACHE_PREFIX + '/cards/search')) localStorage.removeItem(key)
+  }
+} catch {
+  // storage unavailable: nothing to clean
 }
 
 // --- Requests --------------------------------------------------------------
@@ -116,8 +128,12 @@ async function fetchJson<T>(path: string, init: RequestInit = {}): Promise<T> {
 /** Cached requests already on their way, so asking twice at once only fetches once. */
 const inFlight = new Map<string, Promise<unknown>>()
 
-/** GET a Scryfall API path through the throttled queue. Set `cache` for deterministic endpoints. */
-export function scryfallGet<T>(path: string, { cache = false } = {}): Promise<T> {
+/**
+ * GET a Scryfall API path through the throttled queue. Set `cache` for
+ * deterministic endpoints: `true` keeps it for 24h in memory and localStorage,
+ * `'memory'` only for this page visit (for big responses).
+ */
+export function scryfallGet<T>(path: string, { cache = false }: { cache?: boolean | 'memory' } = {}): Promise<T> {
   if (!cache) return fetchJson<T>(path)
   const hit = readCache<T>(path)
   if (hit !== undefined) return Promise.resolve(hit)
@@ -125,7 +141,7 @@ export function scryfallGet<T>(path: string, { cache = false } = {}): Promise<T>
   if (pending) return pending as Promise<T>
   const request = fetchJson<T>(path)
     .then((data) => {
-      writeCache(path, data)
+      writeCache(path, data, cache === true)
       return data
     })
     .finally(() => inFlight.delete(path))
@@ -138,16 +154,35 @@ export function getRandomCard(query: string): Promise<ScryfallCard> {
   return scryfallGet<ScryfallCard>(`/cards/random?q=${encodeURIComponent(query)}`)
 }
 
-/** How many cards match a query (0 when nothing matches). Cached for 24h. */
+/** How many cards match a query (0 when nothing matches). The number is cached for 24h. */
 export async function countCards(query: string): Promise<number> {
+  const key = `count:${query}`
+  const hit = readCache<number>(key)
+  if (hit !== undefined) return hit
+  let count: number
   try {
-    const list = await scryfallGet<ScryfallList<ScryfallCard>>(
-      `/cards/search?q=${encodeURIComponent(query)}`,
-      { cache: true },
-    )
-    return list.total_cards ?? list.data.length
+    const list = await searchPage(query)
+    count = list.total_cards ?? list.data.length
   } catch (e) {
-    if (e instanceof ScryfallError && e.status === 404) return 0
+    if (!(e instanceof ScryfallError && e.status === 404)) throw e
+    count = 0
+  }
+  writeCache(key, count)
+  return count
+}
+
+/** The first page (up to 175 cards) of a search. Kept in memory for this visit only. */
+function searchPage(query: string, order?: string) {
+  const sort = order ? `order=${order}&` : ''
+  return scryfallGet<ScryfallList<ScryfallCard>>(`/cards/search?${sort}q=${encodeURIComponent(query)}`, { cache: 'memory' })
+}
+
+/** Up to 175 cards matching a query, most played first (EDHREC rank). [] when nothing matches. */
+export async function searchCards(query: string): Promise<ScryfallCard[]> {
+  try {
+    return (await searchPage(query, 'edhrec')).data
+  } catch (e) {
+    if (e instanceof ScryfallError && e.status === 404) return []
     throw e
   }
 }

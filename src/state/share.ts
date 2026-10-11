@@ -8,7 +8,9 @@ import { runChallenges, type ChallengeRun } from '../challenges/engine'
 import type { Generated, ParamValues } from '../challenges/types'
 import type { GeneratedCommander } from '../generator/commander'
 import type { ModifierId } from '../generator/modifiers'
+import { challengeCard, type SuggestionReason } from '../generator/secret'
 import { getCardsByIds } from '../scryfall/client'
+import type { Colour } from '../scryfall/types'
 import { DEFAULT_SETTINGS, mergeWithDefaults, type Settings } from './settings'
 
 /** One rolled challenge: id, parameters, and what it picked (choice and card ids). */
@@ -30,6 +32,8 @@ export interface SharePayload {
   ch: SharedOutcome[]
   /** Chaos picks (commander modifiers and challenge ids). */
   x?: { m: ModifierId[]; c: string[] }
+  /** Secret commander mode: strategy, deck colours, [commander id, reason] pairs, tutor ids. */
+  sc?: { t: string; i: Colour[]; c: [string, SuggestionReason][]; f: string[] }
   /** The sender's settings, as a diff from the defaults. */
   s?: unknown
 }
@@ -64,6 +68,15 @@ export function buildSharePayload(
   })
   const payload: SharePayload = { v: 1, c: commander.card.id, r: commander.restrictions, ch }
   if (pick) payload.x = { m: pick.modifiers, c: pick.challenges }
+  const secret = commander.secret
+  if (secret) {
+    payload.sc = {
+      t: secret.theme,
+      i: secret.identity,
+      c: secret.commanders.map((c) => [c.card.id, c.reason]),
+      f: secret.finders.map((c) => c.id),
+    }
+  }
   const s = diffFromDefaults(DEFAULT_SETTINGS, settings)
   if (s !== undefined) payload.s = s
   return payload
@@ -121,12 +134,26 @@ export function settingsFromShare(payload: SharePayload): Settings {
 export async function loadSharedChallenge(
   payload: SharePayload,
 ): Promise<{ commander: GeneratedCommander; run?: ChallengeRun; pick?: ChaosPick }> {
-  const cards = await getCardsByIds([payload.c, ...payload.ch.flatMap((o) => o.k ?? [])])
+  const cards = await getCardsByIds([
+    payload.c,
+    ...payload.ch.flatMap((o) => o.k ?? []),
+    ...(payload.sc?.c.map(([id]) => id) ?? []),
+    ...(payload.sc?.f ?? []),
+  ])
   const byId = new Map(cards.map((c) => [c.id, c]))
   const card = byId.get(payload.c)
   if (!card) throw new Error('This commander couldn’t be found on Scryfall any more.')
 
   const commander: GeneratedCommander = { card, restrictions: payload.r }
+  if (payload.sc) {
+    const found = (id: string) => byId.get(id)
+    commander.secret = {
+      theme: payload.sc.t,
+      identity: payload.sc.i,
+      commanders: payload.sc.c.flatMap(([id, reason]) => (found(id) ? [{ card: found(id)!, reason }] : [])),
+      finders: payload.sc.f.flatMap((id) => (found(id) ? [found(id)!] : [])),
+    }
+  }
   const pick = payload.x ? { modifiers: payload.x.m, challenges: payload.x.c } : undefined
   if (payload.ch.length === 0) return { commander, pick }
 
@@ -145,6 +172,6 @@ export async function loadSharedChallenge(
       return { id: def.id, params, summary: '', generated }
     }),
   }
-  const run = await runChallenges(settings, card, { previous })
+  const run = await runChallenges(settings, challengeCard(commander), { previous })
   return { commander, run, pick }
 }

@@ -43,6 +43,7 @@ export interface ScryfallCard {
   loyalty?: string
   defense?: string
   color_identity: Colour[]
+  keywords?: string[]
   rarity: string
   set: string
   set_name: string

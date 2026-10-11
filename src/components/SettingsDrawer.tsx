@@ -241,6 +241,11 @@ export function SettingsDrawer({ open, onClose, settings, onChange }: Props) {
 
           <section className="space-y-3">
             <h3 className="text-sm font-semibold tracking-wide text-amber-200/80 uppercase">Commander modifiers</h3>
+            {settings.secret.enabled && (
+              <p className="rounded-lg border border-fuchsia-400/40 bg-fuchsia-400/5 p-2 text-xs text-fuchsia-100">
+                🤫 Secret commander mode is on: these don’t apply (they’re about the commander). Deck challenges still do.
+              </p>
+            )}
             {/* The reroll budget lives on the main panel, next to the Generate button. */}
             {MODIFIER_INFO.filter((info) => info.id !== 'rerollBudget').map((info) => {
               const conflict = modifierConflict(info.id, m)

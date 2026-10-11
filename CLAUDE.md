@@ -251,3 +251,16 @@ Verified against the live API on 2026-10-11 (counts are for `game:arena f:brawl 
 - The card back used for loading and the empty state is our own CSS design, not Wizards' card back.
 - Animations respect `prefers-reduced-motion`.
 - Deploy: `.github/workflows/deploy.yml` (GitHub Pages: tests, then build, then publish) or Netlify/Vercel with `npm run build` → `dist`. Paths are relative (`base: './'`), so sub-folder hosting works.
+
+## Secret commander mode (added 2026-10-11)
+
+A non-legendary build-around permanent is the deck's real star; the app suggests commanders and tutors for it (`src/generator/secret.ts`). Commander modifiers don't apply in this mode; deck challenges and chaos (challenges only) do.
+
+- **Picking the card:** a payoff tag for a random strategy (`synergy-lifegain`, `synergy-token`, `synergy-artifact`, `synergy-enchantment`, `synergy-equipment`, `synergy-aura`, `synergy-vehicle`, `synergy-instant`, `synergy-sacrifice`, `synergy-mill`, `synergy-discard`, `synergy-food`, `synergy-treasure`, `synergy-legendary`, `counters-matter`, `lands-matter`, `draw-matters`, `death-trigger`, `attack-trigger`, `cast-trigger`, `alternate-win-condition`), **plus** engine text `(o:whenever or o:"at the beginning" or o:"for each")`, then a random pick from the **top 40 by EDHREC rank** (`/cards/search?order=edhrec`). The payoff tag alone let in utility cards like battle lands under `lands-matter`.
+- **There is no build-around tag.** `build-around`, `secret-commander`, `engine`, `payoff`, `combo-piece`, `wincon` all return 0. `tokens-matter`, `artifacts-matter`, `aristocrats`, `spellslinger`, `voltron` don't exist either (the `synergy-*` names do). `alternate-win-condition` = `win-condition` (23 cards).
+- **Commander suggestions:** up to 2 that can **search for it** (🔎), the rest popular commanders sharing the strategy (🤝), else popular commanders in its colours (🎨). They must satisfy `id>=<secret identity>` (`id>=` works as "includes these colours"). The deck's colours = the intersection of the suggestions, so challenges and must-includes stay legal whichever commander you pick.
+- **Tutor tags are broad:** `tutor-creature/-artifact/-enchantment/-land/-permanent/-card` exist (`tutor-any` = `tutor-card`), but e.g. Light-Paws is an "enchantment tutor" that only finds Auras. `canFind()` parses "search your library for a(n) ___ card ___" and checks the card types, generic words (nonland, permanent…) and conditions after "card" (mana value limits and keywords are checked; "named …" / "with the same name as …" are rejected). Unit-tested with the real misses.
+- Scryfall `t:land` matches either face of a double-faced card; the Land type filter adds `-is:dfc`.
+
+### Cache fix (same day)
+`countCards` used to save the whole first search page (up to 175 full cards) to localStorage to remember one number, which quietly filled the ~5MB quota. Counts now persist just the number; big search pages are memory-only (`cache: 'memory'`), and old `/cards/search` entries are removed on load.

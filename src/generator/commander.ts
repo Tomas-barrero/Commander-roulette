@@ -5,6 +5,7 @@ import type { ScryfallCard } from '../scryfall/types'
 import type { Settings } from '../state/settings'
 import { colourFilterCandidates, describeColourSettings } from './colours'
 import { creatureTypes, describeModifiers, modifierClauses, modifierConflict, pickTribe, tribeClause } from './modifiers'
+import type { SecretInfo } from './secret'
 
 export interface GeneratedCommander {
   card: ScryfallCard
@@ -18,6 +19,8 @@ export interface GeneratedCommander {
   set?: { code: string; name: string }
   /** Labels for the commander restrictions that applied, e.g. "Creature type: Elf". */
   restrictions: string[]
+  /** Secret commander mode: `card` is the secret card, and this has the suggested commanders and tutors. */
+  secret?: SecretInfo
 }
 
 /** Thrown when no Arena commander matches the settings (Scryfall 404). */
