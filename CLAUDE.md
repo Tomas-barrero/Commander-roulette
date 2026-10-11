@@ -212,3 +212,14 @@ Verified against the live API on 2026-10-11 (counts are for `game:arena f:brawl 
 - **Random tribe / random set use a "seed" draw.** The generator first fetches a random commander matching everything else, then uses one of its creature types (avoiding Human when there's another option, since Humans are ~41% of creature commanders) or its set. The final draw is then guaranteed at least one match. Multi-word creature types are matched against `/catalog/creature-types` (e.g. `t:"Time Lord"`, which has no Arena commanders at the moment).
 - `e:<set>` and `year>=` match *printings*: a commander reprinted on Arena in 2024 counts as 2024.
 - `pow<=2` excludes non-creature commanders automatically (they have no power), so Tiny commander conflicts with Planeswalkers-only.
+- **Function tags (`otag:`) that exist:** `counterspell`, `tutor`, `board-wipe` (alias `sweeper`), `ramp`, `mana-rock`, `land-ramp`, `removal`, `burn`, `lifegain`, `mill`, `self-mill`, `discard`, `hand-disruption`, `sacrifice-outlet`, `reanimate`, `counters-matter`, `landfall`, `copy`, `theft`, `protection`, `blink` (alias `flicker`), `evasion`. **Don't exist (404):** `wrath`, `token-generator`, `card-draw`, `graveyard-recursion`, `lifelink`, `pump`.
+- `otag:tutor` (635 cards on Arena Brawl) also covers land searches (e.g. Abzan Monument); `otag:ramp` (1291) includes mana creatures and rocks.
+- `is:gamechanger` works (24 cards on Arena Brawl).
+- `-oracleid:<id>` excludes a card in every printing; that's how generated cards skip the commander and each other. `oracleid:<id> otag:<tag>` checks whether a specific card has a tag (used by Off-theme spice).
+- Must-include pools stay healthy even in narrow identities: mono-white has 802 nonland cards at `edhrec>20000` (albatross), 181 at `r>=rare edhrec<=1500` (bomb) and 245 non-basic lands; colourless has 210 non-basic lands.
+
+## Challenge engine notes
+
+- Deck challenges live in `src/challenges/definitions.ts`. Commander modifiers (1–9) stay in `src/generator/modifiers.ts`, because they run *before* a commander exists and random tribe/set and the reroll budget need special handling.
+- `pool: 'nonland'` challenges ("every nonland card must…") combine into `ctx.restrictions`, which every generated must-include card also has to match. `pool: 'quota'` challenges ("at least N…") are checked against the deck base + restrictions.
+- Feasibility: a pool smaller than the nonland cards a deck needs (60 for Brawl, 35 for Standard Brawl, or N for a quota) is "too small"; under twice that is "tight".

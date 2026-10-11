@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { defaultChallengeSettings, type ChallengeSettings } from '../challenges/conflicts'
 import { DEFAULT_COLOUR_SETTINGS, type ColourSettings } from '../generator/colours'
 import { DEFAULT_MODIFIERS, type CommanderModifiers } from '../generator/modifiers'
 import type { Format } from '../scryfall/types'
@@ -7,12 +8,14 @@ export interface Settings {
   format: Format
   colours: ColourSettings
   modifiers: CommanderModifiers
+  challenges: ChallengeSettings
 }
 
 export const DEFAULT_SETTINGS: Settings = {
   format: 'brawl',
   colours: DEFAULT_COLOUR_SETTINGS,
   modifiers: DEFAULT_MODIFIERS,
+  challenges: defaultChallengeSettings(),
 }
 
 const STORAGE_KEY = 'commander-roulette:settings'

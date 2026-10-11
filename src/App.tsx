@@ -1,5 +1,8 @@
 import { useCallback, useState } from 'react'
+import { activeChallenges } from './challenges/conflicts'
+import { runChallenges, type ChallengeRun } from './challenges/engine'
 import { CardDisplay } from './components/CardDisplay'
+import { ChallengeList } from './components/ChallengeList'
 import { ColourPicker } from './components/ColourPicker'
 import { RulesText } from './components/RulesText'
 import { SettingsDrawer } from './components/SettingsDrawer'
@@ -8,7 +11,7 @@ import { generateCommander, NoCommanderError, type GeneratedCommander } from './
 import { describeModifiers } from './generator/modifiers'
 import { ScryfallError } from './scryfall/client'
 import { useSessionState } from './state/session'
-import { useSettings } from './state/settings'
+import { useSettings, type Settings } from './state/settings'
 
 type Status = { kind: 'idle' } | { kind: 'loading' } | { kind: 'error'; title: string; message: string }
 
@@ -25,28 +28,56 @@ export default function App() {
   const [settings, setSettings] = useSettings()
   const [result, setResult] = useSessionState<GeneratedCommander | undefined>('result', undefined)
   const [generations, setGenerations] = useSessionState('generations', 0)
+  const [challengeRun, setChallengeRun] = useSessionState<ChallengeRun | undefined>('challenges', undefined)
   const [status, setStatus] = useState<Status>({ kind: 'idle' })
+  const [challengeStatus, setChallengeStatus] = useState<Status>({ kind: 'idle' })
   const [drawerOpen, setDrawerOpen] = useState(false)
   const closeDrawer = useCallback(() => setDrawerOpen(false), [])
 
   const problem = manualSelectionProblem(settings.colours)
   const loading = status.kind === 'loading'
-  const activeModifiers = describeModifiers(settings.modifiers).length + (settings.modifiers.rerollBudget.enabled ? 1 : 0)
+  const challengesBusy = challengeStatus.kind === 'loading'
+  const activeCount =
+    describeModifiers(settings.modifiers).length +
+    (settings.modifiers.rerollBudget.enabled ? 1 : 0) +
+    activeChallenges(settings.challenges).length
 
   // Reroll budget: the first commander of the session is free.
   const budget = settings.modifiers.rerollBudget
   const rerollsLeft = Math.max(0, budget.rerolls - Math.max(0, generations - 1))
   const outOfRerolls = budget.enabled && generations > 0 && rerollsLeft === 0
 
+  /** Roll challenges for a commander. `keep` keeps unchanged results; `reroll` re-rolls just that one. */
+  async function rollChallenges(commander: GeneratedCommander, s: Settings, options: { keep?: boolean; reroll?: string } = {}) {
+    setChallengeStatus({ kind: 'loading' })
+    try {
+      const previous = options.keep || options.reroll ? challengeRun : undefined
+      setChallengeRun(await runChallenges(s, commander.card, { previous, reroll: options.reroll }))
+      setChallengeStatus({ kind: 'idle' })
+    } catch (e) {
+      setChallengeStatus({ kind: 'error', ...describeError(e) })
+    }
+  }
+
   async function generate() {
     setStatus({ kind: 'loading' })
     try {
-      setResult(await generateCommander(settings))
+      const commander = await generateCommander(settings)
+      setResult(commander)
+      setChallengeRun(undefined)
       setGenerations((n) => n + 1)
       setStatus({ kind: 'idle' })
+      await rollChallenges(commander, settings)
     } catch (e) {
       setStatus({ kind: 'error', ...describeError(e) })
     }
+  }
+
+  /** "Turn it off" on a challenge whose pool is too small. */
+  function disableChallenge(id: string) {
+    const next = { ...settings, challenges: { ...settings.challenges, [id]: { ...settings.challenges[id], enabled: false } } }
+    setSettings(next)
+    if (result) rollChallenges(result, next, { keep: true })
   }
 
   return (
@@ -63,9 +94,9 @@ export default function App() {
             className="relative rounded-lg border border-stone-600 px-4 py-2 text-sm text-stone-200 transition hover:border-amber-300"
           >
             ⚙ Settings
-            {activeModifiers > 0 && (
+            {activeCount > 0 && (
               <span className="absolute -top-2 -right-2 rounded-full bg-amber-400 px-1.5 text-xs font-bold text-stone-900">
-                {activeModifiers}
+                {activeCount}
               </span>
             )}
           </button>
@@ -84,6 +115,16 @@ export default function App() {
             >
               {loading ? 'Shuffling…' : result ? '🎲 Reroll' : '🎲 Generate commander'}
             </button>
+            {result && activeChallenges(settings.challenges).length > 0 && (
+              <button
+                type="button"
+                onClick={() => rollChallenges(result, settings)}
+                disabled={loading || challengesBusy}
+                className="rounded-lg border border-amber-400/60 px-4 py-1.5 text-sm text-amber-100 transition hover:bg-amber-400/10 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                🔒 Lock commander & reroll challenges
+              </button>
+            )}
             {problem && <p className="text-sm text-amber-200/80">{problem}</p>}
             {budget.enabled && result && (
               <p className="text-sm text-stone-400">
@@ -123,6 +164,31 @@ export default function App() {
                 <CardDisplay key={result.card.id} card={result.card} />
                 <RulesText card={result.card} />
               </div>
+
+              {challengeStatus.kind === 'error' && (
+                <div role="alert" className="rounded-lg border border-red-800 bg-red-950/60 p-4 text-red-100">
+                  <p className="font-semibold">Couldn’t roll challenges: {challengeStatus.title}</p>
+                  <p className="text-sm">{challengeStatus.message}</p>
+                </div>
+              )}
+              {challengesBusy && !challengeRun && (
+                <p className="animate-pulse text-center text-stone-400">Rolling your challenges…</p>
+              )}
+              {challengeRun && challengeRun.outcomes.length > 0 && (
+                <div className={challengesBusy ? 'pointer-events-none animate-pulse' : ''}>
+                  <ChallengeList
+                    run={challengeRun}
+                    busy={challengesBusy}
+                    onReroll={(id) => rollChallenges(result, settings, { reroll: id })}
+                    onDisable={disableChallenge}
+                  />
+                </div>
+              )}
+              {!challengeRun && !challengesBusy && challengeStatus.kind === 'idle' && (
+                <p className="text-center text-sm text-stone-500">
+                  Want it harder? Turn on challenges in ⚙ Settings, then lock the commander and reroll challenges.
+                </p>
+              )}
             </section>
           )
         )}
