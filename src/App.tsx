@@ -8,6 +8,7 @@ import { ChallengeList } from './components/ChallengeList'
 import { copyText } from './components/clipboard'
 import { ColourPicker } from './components/ColourPicker'
 import { HistoryPanel } from './components/HistoryPanel'
+import { RerollBudget } from './components/RerollBudget'
 import { RulesText } from './components/RulesText'
 import { SettingsDrawer } from './components/SettingsDrawer'
 import { manualSelectionProblem } from './generator/colours'
@@ -62,16 +63,23 @@ export default function App() {
   const problem = manualSelectionProblem(settings.colours)
   const loading = status.kind === 'loading'
   const challengesBusy = challengeStatus.kind === 'loading'
+  // The settings badge counts what's in the drawer (the reroll budget sits on the main panel).
   const activeCount =
     describeModifiers(settings.modifiers).length +
-    (settings.modifiers.rerollBudget.enabled ? 1 : 0) +
     activeChallenges(settings.challenges).length +
     (settings.chaos.enabled ? settings.chaos.count : 0)
 
-  // Reroll budget: the first commander of the session is free.
+  // Reroll budget: `generations` counts rolls made while a budget is on. The first one is free.
   const budget = settings.modifiers.rerollBudget
   const rerollsLeft = Math.max(0, budget.rerolls - Math.max(0, generations - 1))
   const outOfRerolls = budget.enabled && generations > 0 && rerollsLeft === 0
+  const budgetLocked = budget.enabled && generations > 0
+
+  function setBudget(next: typeof budget) {
+    // Switching the budget on or off starts the count again from your next roll.
+    if (next.enabled !== budget.enabled) setGenerations(0)
+    setSettings({ ...settings, modifiers: { ...settings.modifiers, rerollBudget: next } })
+  }
 
   /**
    * Roll challenges for a commander, including chaos picks if there are any.
@@ -105,7 +113,7 @@ export default function App() {
       setEntryKey(newKey())
       setRolledWith(settings)
       setSharedFrom(undefined)
-      setGenerations((n) => n + 1)
+      if (budget.enabled) setGenerations((n) => n + 1)
       setStatus({ kind: 'idle' })
       await rollChallenges(commander, settings, { pick })
     } catch (e) {
@@ -266,14 +274,7 @@ export default function App() {
               </button>
             )}
             {problem && <p className="text-sm text-amber-200/80">{problem}</p>}
-            {budget.enabled && result && (
-              <p className="text-sm text-stone-400">
-                {outOfRerolls ? 'Out of rerolls. You’re building this one! ' : `${rerollsLeft} reroll${rerollsLeft === 1 ? '' : 's'} left. `}
-                <button type="button" onClick={() => setGenerations(0)} className="underline hover:text-white">
-                  New session
-                </button>
-              </p>
-            )}
+            <RerollBudget budget={budget} onChange={setBudget} rolls={generations} onNewSession={() => setGenerations(0)} />
           </div>
         </section>
 
@@ -295,7 +296,11 @@ export default function App() {
                   <button
                     type="button"
                     onClick={() => {
-                      setSettings(settingsFromShare(sharedFrom))
+                      // A locked reroll budget stays yours; otherwise theirs starts with your next roll.
+                      const theirs = settingsFromShare(sharedFrom)
+                      if (budgetLocked) theirs.modifiers = { ...theirs.modifiers, rerollBudget: budget }
+                      else setGenerations(0)
+                      setSettings(theirs)
                       setSharedFrom(undefined)
                       flash('Now using their settings.')
                     }}

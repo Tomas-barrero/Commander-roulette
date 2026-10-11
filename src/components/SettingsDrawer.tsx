@@ -153,15 +153,6 @@ export function SettingsDrawer({ open, onClose, settings, onChange }: Props) {
         )}
       </div>
     ),
-    rerollBudget: (
-      <Range
-        label="Rerolls"
-        value={m.rerollBudget.rerolls}
-        min={0}
-        max={20}
-        onChange={(rerolls) => patch('rerollBudget', { rerolls })}
-      />
-    ),
   }
 
   return (
@@ -250,7 +241,8 @@ export function SettingsDrawer({ open, onClose, settings, onChange }: Props) {
 
           <section className="space-y-3">
             <h3 className="text-sm font-semibold tracking-wide text-amber-200/80 uppercase">Commander modifiers</h3>
-            {MODIFIER_INFO.map((info) => {
+            {/* The reroll budget lives on the main panel, next to the Generate button. */}
+            {MODIFIER_INFO.filter((info) => info.id !== 'rerollBudget').map((info) => {
               const conflict = modifierConflict(info.id, m)
               const value = m[info.id]
               const toggleable = typeof value === 'object'
@@ -307,7 +299,12 @@ export function SettingsDrawer({ open, onClose, settings, onChange }: Props) {
           <button
             type="button"
             onClick={() =>
-              onChange({ ...settings, modifiers: DEFAULT_MODIFIERS, challenges: defaultChallengeSettings() })
+              onChange({
+                ...settings,
+                // Keep the reroll budget: it is set (and possibly locked) on the main panel.
+                modifiers: { ...DEFAULT_MODIFIERS, rerollBudget: m.rerollBudget },
+                challenges: defaultChallengeSettings(),
+              })
             }
             className="text-sm text-stone-400 hover:text-white"
           >

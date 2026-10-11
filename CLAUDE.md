@@ -74,7 +74,7 @@ Each challenge is a **toggle in a Settings drawer**, grouped by category, with i
 6. **Era**: commander from a random set, or a release-year range (`year>=2020`)
 7. **Alchemy**: include / exclude / only Alchemy & rebalanced cards
 8. **Tiny commander**: power ≤ 2
-9. **Reroll budget**: only N rerolls allowed per session
+9. **Reroll budget**: only N rerolls allowed per session. Set on the main panel (not the drawer) before rolling; locks once you roll with it until "New session".
 
 ### Must-include cards (auto)
 10. **Random must-includes**: deck must contain X random cards in the commander's identity (X = slider, 1–10)
