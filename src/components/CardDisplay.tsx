@@ -24,7 +24,7 @@ export function CardDisplay({ card }: { card: ScryfallCard }) {
             key={current.src}
             src={current.src}
             alt={current.name}
-            className="animate-card-in h-full w-full object-contain drop-shadow-[0_12px_30px_rgba(0,0,0,0.6)]"
+            className="animate-flip-in h-full w-full object-contain drop-shadow-[0_12px_30px_rgba(0,0,0,0.6)]"
           />
         )}
       </div>

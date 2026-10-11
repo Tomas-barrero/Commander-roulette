@@ -74,7 +74,7 @@ export function ChallengeList({ run, busy, chaosIds = [], onReroll, onDisable, o
     <section className="rounded-xl border border-amber-400/30 bg-stone-900/80 p-5 shadow-xl">
       <h2 className="mb-4 font-serif text-xl font-semibold text-amber-100">Your challenge</h2>
       <ul className="space-y-4">
-        {run.outcomes.map((o) => {
+        {run.outcomes.map((o, index) => {
           const def = CHALLENGES_BY_ID[o.id]
           if (!def) return null
           const icon = CATEGORIES.find((c) => c.id === def.category)?.icon
@@ -82,7 +82,11 @@ export function ChallengeList({ run, busy, chaosIds = [], onReroll, onDisable, o
           const tooSmall = o.pools?.some((p) => p.level === 'too-small')
           const chaos = chaosIds.includes(o.id)
           return (
-            <li key={o.id} className={`space-y-2 ${problem ? 'opacity-60' : ''}`}>
+            <li
+              key={o.id}
+              className={`animate-rise space-y-2 ${problem ? 'opacity-60' : ''}`}
+              style={{ animationDelay: `${index * 60}ms` }}
+            >
               <div className="flex flex-wrap items-center gap-2">
                 <span aria-hidden>{icon}</span>
                 <span className="font-medium text-stone-100">{def.name}</span>

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { generateCommanderWithChaos, newChaosPick, runChallengesWithChaos, type ChaosPick } from './challenges/chaos'
 import { activeChallenges } from './challenges/conflicts'
 import type { ChallengeRun } from './challenges/engine'
+import { CardFan, ShuffleAnimation } from './components/CardBacks'
 import { CardDisplay } from './components/CardDisplay'
 import { ChallengeList } from './components/ChallengeList'
 import { copyText } from './components/clipboard'
@@ -219,18 +220,20 @@ export default function App() {
 
   return (
     <div className="flex min-h-screen flex-col">
-      <header className="border-b border-stone-800 bg-black/30 px-4 py-4">
+      {/* The wooden rail at the edge of the card table. */}
+      <header className="border-b-4 border-[#1a0f07] bg-gradient-to-b from-[#4a2e19] to-[#2a190d] px-4 py-3 shadow-lg shadow-black/40 sm:py-4">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-4">
-          <div>
-            <h1 className="font-serif text-2xl font-bold text-amber-100">Commander Roulette</h1>
-            <p className="text-sm text-stone-400">A random MTG Arena Brawl commander to build around.</p>
+          <div className="min-w-0">
+            <h1 className="font-serif text-xl font-bold tracking-wide text-amber-100 sm:text-2xl">Commander Roulette</h1>
+            <p className="hidden text-sm text-amber-100/60 sm:block">A random MTG Arena Brawl commander to build around.</p>
           </div>
           <button
             type="button"
             onClick={() => setDrawerOpen(true)}
-            className="relative rounded-lg border border-stone-600 px-4 py-2 text-sm text-stone-200 transition hover:border-amber-300"
+            aria-label="Settings"
+            className="relative shrink-0 rounded-lg border border-amber-200/30 bg-black/20 px-3 py-2 text-sm text-stone-100 transition hover:border-amber-300 sm:px-4"
           >
-            ⚙ Settings
+            ⚙<span className="hidden sm:inline"> Settings</span>
             {activeCount > 0 && (
               <span className="absolute -top-2 -right-2 rounded-full bg-amber-400 px-1.5 text-xs font-bold text-stone-900">
                 {activeCount}
@@ -282,9 +285,7 @@ export default function App() {
         )}
 
         {loading ? (
-          <div className="flex justify-center py-10">
-            <div className="animate-shuffle aspect-[745/1040] w-48 rounded-[4.5%] border-4 border-amber-900 bg-gradient-to-br from-amber-800 via-stone-900 to-amber-950 shadow-2xl" />
-          </div>
+          <ShuffleAnimation />
         ) : (
           result && (
             <section className="space-y-6">
@@ -352,7 +353,14 @@ export default function App() {
                 </div>
               )}
               {challengesBusy && !challengeRun && (
-                <p className="animate-pulse text-center text-stone-400">Rolling your challenges…</p>
+                <div className="rounded-xl border border-amber-400/20 bg-stone-900/80 p-5" role="status" aria-live="polite">
+                  <p className="mb-4 font-serif text-amber-100/80">Rolling your challenges…</p>
+                  <div className="space-y-3">
+                    {[70, 45, 60].map((w) => (
+                      <div key={w} className="h-4 animate-pulse rounded bg-stone-700/60" style={{ width: `${w}%` }} />
+                    ))}
+                  </div>
+                </div>
               )}
               {challengeRun && challengeRun.outcomes.length > 0 && (
                 <div className={challengesBusy ? 'pointer-events-none animate-pulse' : ''}>
@@ -376,7 +384,17 @@ export default function App() {
         )}
 
         {!result && !loading && status.kind === 'idle' && (
-          <p className="py-16 text-center text-stone-500">Pick your colours and hit Generate.</p>
+          <div className="animate-rise space-y-6 py-8 text-center">
+            <CardFan />
+            <div className="space-y-2">
+              <p className="font-serif text-xl text-amber-100">Pick your colours and hit Generate.</p>
+              <ol className="mx-auto max-w-md space-y-1 text-sm text-stone-400">
+                <li>🎲 Roll a random commander you can play in Arena Brawl.</li>
+                <li>⚙ Want it harder? Add challenges in Settings, or let chaos mode pick some.</li>
+                <li>📋 Copy it into Arena, or share the challenge with a friend.</li>
+              </ol>
+            </div>
+          </div>
         )}
 
         <HistoryPanel
@@ -390,16 +408,29 @@ export default function App() {
         />
       </main>
 
+      {/* On phones the main Reroll button scrolls out of reach, so keep a die in the corner. */}
+      {result && !drawerOpen && (
+        <button
+          type="button"
+          onClick={generate}
+          disabled={loading || !!problem || outOfRerolls}
+          aria-label="Reroll commander"
+          className="fixed right-4 bottom-4 z-30 flex h-14 w-14 items-center justify-center rounded-full bg-amber-400 text-2xl shadow-xl shadow-black/50 transition active:scale-95 disabled:opacity-50 md:hidden"
+        >
+          🎲
+        </button>
+      )}
+
       {toast && (
         <div
           role="status"
-          className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-lg bg-stone-100 px-4 py-2 text-sm font-medium text-stone-900 shadow-2xl"
+          className="fixed bottom-24 left-1/2 z-50 w-max max-w-[calc(100vw-2rem)] -translate-x-1/2 rounded-lg bg-stone-100 px-4 py-2 text-center text-sm font-medium text-stone-900 shadow-2xl md:bottom-6"
         >
           {toast}
         </div>
       )}
 
-      <footer className="border-t border-stone-800 px-4 py-4 text-center text-xs text-stone-500">
+      <footer className="border-t border-stone-800 px-4 pt-4 pb-24 text-center text-xs text-stone-500 md:pb-4">
         Commander Roulette is unofficial Fan Content permitted under the Fan Content Policy. Not approved/endorsed by
         Wizards. Portions of the materials used are property of Wizards of the Coast. ©Wizards of the Coast LLC. Card
         data and images via{' '}

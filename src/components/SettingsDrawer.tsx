@@ -32,7 +32,13 @@ export function SettingsDrawer({ open, onClose, settings, onChange }: Props) {
     if (!open) return
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
     window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
+    // Stop the page scrolling behind the drawer.
+    const overflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      document.body.style.overflow = overflow
+    }
   }, [open, onClose])
 
   // Only needed for the "choose a creature type" list.

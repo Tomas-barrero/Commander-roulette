@@ -244,3 +244,10 @@ Verified against the live API on 2026-10-11 (counts are for `game:arena f:brawl 
 - Opening a link or a history entry fetches every card in **one** `POST /cards/collection` request (up to 75 ids), then re-runs the challenges keeping everything rolled, which only re-checks pool counts (usually cached). The receiver's own settings are untouched unless they click "Use their settings".
 - History (last 20) and favourites (up to 100) live in localStorage as share payloads plus a thumbnail URL, not full card objects, which would be too big.
 - **Arena export:** multi-face cards use the front face name (`Delver of Secrets`, `Bonecrusher Giant`). ⚠️ Not yet tested in Arena itself, especially split cards (e.g. `Fire // Ice`). If Arena rejects one, try the `Fire /// Ice` form, then update `arenaName` and record the answer here.
+
+## Polish & deploy notes
+
+- **No blurred art background.** CLAUDE.md's image rules say never blur, so the Feature 2 "nice touch" was skipped. The felt table is pure CSS (`body::before` in `index.css`; not `background-attachment: fixed`, which breaks on mobile Safari).
+- The card back used for loading and the empty state is our own CSS design, not Wizards' card back.
+- Animations respect `prefers-reduced-motion`.
+- Deploy: `.github/workflows/deploy.yml` (GitHub Pages: tests, then build, then publish) or Netlify/Vercel with `npm run build` → `dist`. Paths are relative (`base: './'`), so sub-folder hosting works.
